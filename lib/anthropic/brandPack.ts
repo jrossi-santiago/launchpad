@@ -117,7 +117,8 @@ export async function callClaude(
   });
 
   if (!response.ok) {
-    throw new Error(`Anthropic API responded with ${response.status}`);
+    const body = await response.text().catch(() => "");
+    throw new Error(`Anthropic API responded with ${response.status}: ${body}`);
   }
 
   const data = await response.json();
