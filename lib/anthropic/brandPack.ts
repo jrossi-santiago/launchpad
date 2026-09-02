@@ -69,7 +69,6 @@ export function buildBrandPackRequest(answers: InterviewAnswers) {
   return {
     model: "claude-sonnet-5",
     max_tokens: 2048,
-    temperature: 0.7,
     system:
       "You are helping a founder build a Brand Pack for Launchpad, a tool that finds high-engagement X posts in their niche and helps them reply in their own voice. Given their interview answers, produce a positioning statement, an ideal customer profile, voice guardrails, and reply templates they can adapt. Keep everything concrete and specific to what they told you — no generic marketing filler. Reply templates should read like something a real person would actually post, not ad copy.",
     messages: [
