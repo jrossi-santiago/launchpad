@@ -5,6 +5,7 @@ export type AudienceMember = {
   name: string | null;
   bio: string | null;
   followersCount: number | null;
+  replyTweetId: string | null; // the reply's own tweet id; always null for retweeters
 };
 
 export type AudiencePage = {
@@ -16,7 +17,7 @@ export type AudiencePage = {
 // Shared by both mappers below — GetXAPI's TweetAuthor (replies) and User
 // (retweeters) schemas both carry userName/name/description/followers,
 // verified against https://docs.getxapi.com/openapi.json.
-function mapAuthorToMember(raw: unknown): AudienceMember | null {
+function mapAuthorToMember(raw: unknown, replyTweetId: string | null = null): AudienceMember | null {
   if (!raw || typeof raw !== "object") return null;
   const item = raw as Record<string, unknown>;
   const userName = item.userName;
@@ -27,6 +28,7 @@ function mapAuthorToMember(raw: unknown): AudienceMember | null {
     name: typeof item.name === "string" ? item.name : null,
     bio: typeof item.description === "string" ? item.description : null,
     followersCount: typeof item.followers === "number" ? item.followers : null,
+    replyTweetId,
   };
 }
 
@@ -49,7 +51,14 @@ export function mapGetXRepliesResponse(response: unknown): AudiencePage {
   const members: AudienceMember[] = [];
   for (const raw of replies) {
     if (!raw || typeof raw !== "object") continue;
-    const member = mapAuthorToMember((raw as Record<string, unknown>).author);
+    const replyTweet = raw as Record<string, unknown>;
+    const replyTweetId =
+      typeof replyTweet.id === "string"
+        ? replyTweet.id
+        : typeof replyTweet.id === "number"
+          ? String(replyTweet.id)
+          : null;
+    const member = mapAuthorToMember(replyTweet.author, replyTweetId);
     if (member) members.push(member);
   }
 
@@ -140,6 +149,7 @@ export function buildMockAudiencePage(pageIndex: number): AudiencePage {
       name: `Mock Audience Member ${n}`,
       bio: "Set GETX_API_KEY to pull this person's real bio.",
       followersCount: n * 113,
+      replyTweetId: null,
     };
   });
 

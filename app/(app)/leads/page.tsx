@@ -39,6 +39,12 @@ export default async function LeadsPage() {
     }"`,
   }));
 
+  const { data: pack } = await supabase
+    .from("brand_packs")
+    .select("id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
   return (
     <div className="flex flex-1 flex-col gap-6">
       <div>
@@ -50,7 +56,7 @@ export default async function LeadsPage() {
         </p>
       </div>
 
-      <LeadsTable initialLeads={leadRows} sourceTweets={sourceTweets} />
+      <LeadsTable initialLeads={leadRows} sourceTweets={sourceTweets} hasPack={pack != null} />
     </div>
   );
 }
