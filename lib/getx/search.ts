@@ -125,7 +125,7 @@ export async function fetchTweetSearch(params: RadarSearchParams): Promise<{
   const baseUrl = process.env.GETX_API_BASE_URL ?? "https://api.getxapi.com";
   const query = buildSearchQuery(params);
   const response = await fetch(
-    `${baseUrl}/twitter/tweet/advanced_search?query=${encodeURIComponent(query)}&product=Top`,
+    `${baseUrl}/twitter/tweet/advanced_search?q=${encodeURIComponent(query)}&product=Top`,
     {
       headers: {
         authorization: `Bearer ${process.env.GETX_API_KEY!}`,
