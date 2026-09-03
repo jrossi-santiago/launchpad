@@ -1,15 +1,25 @@
 import type { RadarResult } from "@/lib/getx/search";
 
+export type DraftState = "idle" | "drafting" | "ready" | "failed";
+
+const DRAFT_STATE_LABELS: Record<Exclude<DraftState, "idle">, string> = {
+  drafting: "Drafting…",
+  ready: "Drafted",
+  failed: "Added — draft failed, retry from Launchpad",
+};
+
 export function ResultCard({
   result,
   onAdd,
   isAdding,
   justAdded,
+  draftState,
 }: {
   result: RadarResult;
   onAdd: () => void;
   isAdding: boolean;
   justAdded: boolean;
+  draftState: DraftState;
 }) {
   const metrics = result.metrics ?? {
     like_count: 0,
@@ -34,6 +44,8 @@ export function ResultCard({
         </a>
       </div>
 
+      <p className="text-xs text-zinc-500 dark:text-zinc-400">{result.whyItMatched}</p>
+
       <p className="text-sm text-zinc-700 dark:text-zinc-300">
         {result.content.length > 240
           ? `${result.content.slice(0, 240)}…`
@@ -47,14 +59,23 @@ export function ResultCard({
           <span>{metrics.reply_count} replies</span>
         </span>
 
-        <button
-          type="button"
-          onClick={onAdd}
-          disabled={added || isAdding}
-          className="shrink-0 rounded-full bg-zinc-900 px-4 py-1.5 text-xs font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
-        >
-          {added ? "Added" : isAdding ? "Adding…" : "Add to Launchpad"}
-        </button>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <button
+            type="button"
+            onClick={onAdd}
+            disabled={added || isAdding}
+            className="shrink-0 rounded-full bg-zinc-900 px-4 py-1.5 text-xs font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
+          >
+            {added ? "Added" : isAdding ? "Adding…" : "Add to Launchpad"}
+          </button>
+          {added && draftState !== "idle" ? (
+            <span
+              className={`text-[11px] ${draftState === "failed" ? "text-amber-600 dark:text-amber-400" : "text-zinc-500 dark:text-zinc-400"}`}
+            >
+              {DRAFT_STATE_LABELS[draftState]}
+            </span>
+          ) : null}
+        </div>
       </div>
     </div>
   );

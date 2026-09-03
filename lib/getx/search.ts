@@ -1,12 +1,17 @@
 import type { BrandPackRow } from "@/lib/anthropic/brandPack";
 import type { FetchedTweet, TweetMetrics } from "@/lib/getx/tweet";
 
-export type RadarResult = FetchedTweet & { alreadySaved: boolean };
+export type RadarResult = FetchedTweet & {
+  alreadySaved: boolean;
+  whyItMatched: string;
+};
 
 export type RadarSearchParams = {
   query: string;
   minFaves: number;
   rangeHours: number; // 24 | 72 | 168
+  product: "Top" | "Latest";
+  cursor: string; // "" for page one, never null/undefined
 };
 
 // Takes the first line of `icp` (falling back to `business_summary` if icp
@@ -27,6 +32,37 @@ export function buildDefaultRadarQuery(brandPack: BrandPackRow): string {
 export function buildSearchQuery(params: RadarSearchParams): string {
   const sinceSeconds = Math.floor(Date.now() / 1000 - params.rangeHours * 3600);
   return `${params.query} min_faves:${params.minFaves} since_time:${sinceSeconds}`;
+}
+
+// Advanced-search query operators embedded by buildSearchQuery() (e.g.
+// "min_faves:20", "since_time:1700000000") — stripped out before we look
+// for literal keyword overlap with a result's content.
+const OPERATOR_TOKEN_PATTERN = /\b[a-z_]+:\S+/gi;
+
+// Cheap, deterministic, non-AI heuristic: strip operator tokens out of the
+// query, then report which of the remaining words literally appear
+// (case-insensitive substring match) in the result's content. GetXAPI's
+// own relevance ranking can match on things not literally in the query, so
+// this falls back to a generic line rather than claiming a false overlap.
+export function buildWhyItMatched(content: string, query: string): string {
+  const withoutOperators = query.replace(OPERATOR_TOKEN_PATTERN, " ");
+  const words = Array.from(
+    new Set(
+      withoutOperators
+        .split(/\s+/)
+        .map((word) => word.trim())
+        .filter((word) => word.length > 1),
+    ),
+  );
+
+  const lowerContent = content.toLowerCase();
+  const matched = words.filter((word) => lowerContent.includes(word.toLowerCase()));
+
+  if (matched.length === 0) {
+    return "High-engagement match in your search";
+  }
+
+  return `Matches ${matched.map((word) => `"${word}"`).join(", ")} from your search`;
 }
 
 // Response shape verified against the live API (see the flat-envelope note
@@ -114,8 +150,11 @@ export async function fetchTweetSearch(params: RadarSearchParams): Promise<{
 }> {
   const baseUrl = process.env.GETX_API_BASE_URL ?? "https://api.getxapi.com";
   const query = buildSearchQuery(params);
+  const cursorParam = params.cursor
+    ? `&cursor=${encodeURIComponent(params.cursor)}`
+    : "";
   const response = await fetch(
-    `${baseUrl}/twitter/tweet/advanced_search?q=${encodeURIComponent(query)}&product=Top`,
+    `${baseUrl}/twitter/tweet/advanced_search?q=${encodeURIComponent(query)}&product=${params.product}${cursorParam}`,
     {
       headers: {
         authorization: `Bearer ${process.env.GETX_API_KEY!}`,
@@ -145,14 +184,19 @@ const MOCK_HANDLES = [
   "startup_signal",
 ];
 
-export function buildMockSearchResults(params: RadarSearchParams): {
-  results: FetchedTweet[];
-  nextCursor: string | null;
-} {
+// Deterministic sentinel returned as page 1's nextCursor so "More" is
+// testable end-to-end with no GETX_API_KEY set (per Lesson 4/Day 6 goal).
+export const MOCK_NEXT_CURSOR = "mock-page-2";
+
+function buildMockPage(
+  params: RadarSearchParams,
+  pageOffset: number,
+): FetchedTweet[] {
   const count = 15;
-  const results: FetchedTweet[] = Array.from({ length: count }, (_, i) => {
-    const id = `800000000000000${String(1000 + i).slice(1)}`;
-    const handle = MOCK_HANDLES[i % MOCK_HANDLES.length];
+  return Array.from({ length: count }, (_, i) => {
+    const n = pageOffset + i;
+    const id = `800000000000000${String(1000 + n).slice(1)}`;
+    const handle = MOCK_HANDLES[n % MOCK_HANDLES.length];
     const likeCount = params.minFaves + (count - i) * 7;
     const retweetCount = Math.floor(likeCount / 4);
     const replyCount = Math.floor(likeCount / 8);
@@ -166,12 +210,21 @@ export function buildMockSearchResults(params: RadarSearchParams): {
     return {
       x_tweet_id: id,
       author_handle: `@${handle}`,
-      content: `[Mock result ${i + 1}] Matching "${params.query}" — set GETX_API_KEY to search real X posts here.`,
+      content: `[Mock result ${n + 1}] Matching "${params.query}" — set GETX_API_KEY to search real X posts here.`,
       url: `https://x.com/${handle}/status/${id}`,
       metrics,
       engagement_score: likeCount + retweetCount + replyCount,
     };
   });
+}
 
-  return { results, nextCursor: null };
+export function buildMockSearchResults(params: RadarSearchParams): {
+  results: FetchedTweet[];
+  nextCursor: string | null;
+} {
+  if (params.cursor === MOCK_NEXT_CURSOR) {
+    return { results: buildMockPage(params, 15), nextCursor: null };
+  }
+
+  return { results: buildMockPage(params, 0), nextCursor: MOCK_NEXT_CURSOR };
 }

@@ -82,6 +82,15 @@ export async function POST(request: Request) {
 
     const drafts = await insertDrafts(supabase, user.id, tweet.id, draftTexts);
 
+    if (tweet.status === "queued") {
+      const { error: statusError } = await supabase
+        .from("tweets")
+        .update({ status: "drafted" })
+        .eq("id", tweet.id);
+
+      if (statusError) throw statusError;
+    }
+
     await recordRegeneration(supabase, user.id, tweet.id);
     const updatedUsage = await getRegenerationUsage(supabase, user.id);
 
