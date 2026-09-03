@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { LaunchpadQueue, type QueueItem } from "@/components/launchpad/LaunchpadQueue";
 import type { TweetRow } from "@/lib/getx/tweet";
 import type { DraftRow } from "@/lib/anthropic/drafts";
+import { getRegenerationUsage } from "@/lib/usage/regenerations";
 
 export default async function LaunchpadPage() {
   const supabase = await createClient();
@@ -54,5 +55,7 @@ export default async function LaunchpadPage() {
     drafts: draftsByTweetId.get(tweet.id) ?? [],
   }));
 
-  return <LaunchpadQueue initialItems={initialItems} />;
+  const initialUsage = await getRegenerationUsage(supabase, user.id);
+
+  return <LaunchpadQueue initialItems={initialItems} initialUsage={initialUsage} />;
 }
