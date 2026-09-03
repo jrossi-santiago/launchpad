@@ -104,6 +104,7 @@ export async function POST(request: Request) {
     tweet_id: tweetRow.id,
     source: sourceType,
     status: "new",
+    reply_tweet_id: member.replyTweetId,
   }));
 
   const { data: inserted, error: upsertError } = await supabase
