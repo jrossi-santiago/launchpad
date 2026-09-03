@@ -79,7 +79,7 @@ export default async function LaunchpadPage() {
   }));
 
   const initialUsage = await getRegenerationUsage(supabase, user.id);
-  const initialActionUsage = await getAllActionUsage(supabase, user.id);
+  const initialActionUsage = await getAllActionUsage(supabase, user.id, user.email);
 
   const { data: xConnection } = await supabase
     .from("x_connections")

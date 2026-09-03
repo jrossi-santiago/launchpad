@@ -118,7 +118,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const usage = await getActionUsage(supabase, user.id, "reply");
+  const usage = await getActionUsage(supabase, user.id, "reply", user.email);
   if (usage.remaining <= 0) {
     return NextResponse.json(
       {

@@ -3,6 +3,19 @@ import { startOfCurrentUtcDay } from "@/lib/usage/dailyBoundary";
 
 export const ACTION_DAILY_LIMITS = { reply: 8, like: 20, follow: 10 } as const;
 
+// Per-account overrides to the reply cap above, keyed by email and
+// requested directly by the account owner — not a settings UI, just a
+// short allowlist for the rare case someone wants their own account
+// raised above the default.
+const REPLY_LIMIT_OVERRIDES_BY_EMAIL: Record<string, number> = {
+  "josephrossi613@gmail.com": 50,
+};
+
+function getReplyLimit(userEmail: string | null | undefined): number {
+  const override = userEmail ? REPLY_LIMIT_OVERRIDES_BY_EMAIL[userEmail.toLowerCase()] : undefined;
+  return override ?? ACTION_DAILY_LIMITS.reply;
+}
+
 export type ActionUsage = {
   used: number;
   limit: number;
@@ -24,6 +37,7 @@ export async function getActionUsage(
   supabase: SupabaseServerClient,
   userId: string,
   actionType: "reply" | "like" | "follow",
+  userEmail?: string | null,
 ): Promise<ActionUsage> {
   const { count, error } = await supabase
     .from("actions")
@@ -35,7 +49,7 @@ export async function getActionUsage(
 
   if (error) throw error;
 
-  const limit = ACTION_DAILY_LIMITS[actionType];
+  const limit = actionType === "reply" ? getReplyLimit(userEmail) : ACTION_DAILY_LIMITS[actionType];
   const used = count ?? 0;
   return {
     used,
@@ -47,11 +61,12 @@ export async function getActionUsage(
 export async function getAllActionUsage(
   supabase: SupabaseServerClient,
   userId: string,
+  userEmail?: string | null,
 ): Promise<AllActionUsage> {
   const [reply, like, follow] = await Promise.all([
-    getActionUsage(supabase, userId, "reply"),
-    getActionUsage(supabase, userId, "like"),
-    getActionUsage(supabase, userId, "follow"),
+    getActionUsage(supabase, userId, "reply", userEmail),
+    getActionUsage(supabase, userId, "like", userEmail),
+    getActionUsage(supabase, userId, "follow", userEmail),
   ]);
 
   return { reply, like, follow };
