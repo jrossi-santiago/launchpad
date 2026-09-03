@@ -14,6 +14,14 @@ export type LeadRow = {
   created_at: string;
   outreach_draft: string | null;
   reply_tweet_id: string | null;
+  reply_text: string | null;
+};
+
+export type SourceTweet = {
+  id: string;
+  authorHandle: string;
+  content: string;
+  url: string | null;
 };
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -30,13 +38,17 @@ const STATUS_LABELS: Record<string, string> = {
 
 const TOTAL_COLUMNS = 10;
 
+function truncate(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
 export function LeadsTable({
   initialLeads,
   sourceTweets,
   hasPack,
 }: {
   initialLeads: LeadRow[];
-  sourceTweets: { id: string; label: string }[];
+  sourceTweets: SourceTweet[];
   hasPack: boolean;
 }) {
   const [leads, setLeads] = useState<LeadRow[]>(initialLeads);
@@ -51,9 +63,9 @@ export function LeadsTable({
   const [markingIds, setMarkingIds] = useState<Set<string>>(new Set());
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
 
-  const sourceLabelById = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const tweet of sourceTweets) map.set(tweet.id, tweet.label);
+  const sourceTweetById = useMemo(() => {
+    const map = new Map<string, SourceTweet>();
+    for (const tweet of sourceTweets) map.set(tweet.id, tweet);
     return map;
   }, [sourceTweets]);
 
@@ -248,7 +260,7 @@ export function LeadsTable({
             <option value="all">All tweets</option>
             {sourceTweets.map((tweet) => (
               <option key={tweet.id} value={tweet.id}>
-                {tweet.label}
+                {tweet.authorHandle}: &quot;{truncate(tweet.content, 60)}&quot;
               </option>
             ))}
           </select>
@@ -321,7 +333,7 @@ export function LeadsTable({
               <th className="px-4 py-3 font-medium">Source tweet</th>
               <th className="px-4 py-3 font-medium">Added</th>
               <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Draft</th>
+              <th className="px-4 py-3 font-medium">Detail</th>
             </tr>
           </thead>
           <tbody>
@@ -331,6 +343,7 @@ export function LeadsTable({
               const isSending = sendingIds.has(lead.id);
               const isMarking = markingIds.has(lead.id);
               const actionError = actionErrors[lead.id];
+              const sourceTweet = lead.tweet_id ? sourceTweetById.get(lead.tweet_id) : undefined;
 
               return (
                 <Fragment key={lead.id}>
@@ -371,7 +384,9 @@ export function LeadsTable({
                       </span>
                     </td>
                     <td className="max-w-xs truncate px-4 py-3 text-zinc-500 dark:text-zinc-400">
-                      {lead.tweet_id ? sourceLabelById.get(lead.tweet_id) ?? "—" : "—"}
+                      {sourceTweet
+                        ? `${sourceTweet.authorHandle}: "${truncate(sourceTweet.content, 60)}"`
+                        : "—"}
                     </td>
                     <td className="px-4 py-3 text-zinc-500 dark:text-zinc-400">
                       {new Date(lead.created_at).toLocaleDateString()}
@@ -382,72 +397,121 @@ export function LeadsTable({
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      {hasDraft ? (
-                        <button
-                          type="button"
-                          onClick={() => setExpandedId(isExpanded ? null : lead.id)}
-                          className="rounded-full border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                        >
-                          {isExpanded ? "Hide" : "View"}
-                        </button>
-                      ) : (
-                        <span className="text-zinc-400 dark:text-zinc-600">—</span>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => setExpandedId(isExpanded ? null : lead.id)}
+                        className="rounded-full border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                      >
+                        {isExpanded ? "Hide" : "View"}
+                      </button>
                     </td>
                   </tr>
                   {isExpanded ? (
                     <tr className="border-b border-zinc-100 last:border-0 dark:border-zinc-900">
                       <td colSpan={TOTAL_COLUMNS} className="bg-zinc-50 px-6 py-4 dark:bg-zinc-950">
-                        <p className="text-sm text-zinc-800 dark:text-zinc-200">
-                          {lead.outreach_draft}
-                        </p>
-                        <div className="mt-3 flex flex-wrap items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void handleCopy(lead)}
-                            className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                          >
-                            {copiedId === lead.id ? "Copied" : "Copy"}
-                          </button>
-
-                          {lead.reply_tweet_id ? (
-                            <button
-                              type="button"
-                              onClick={() => void handleSend(lead.id)}
-                              disabled={isSending || lead.status === "replied"}
-                              className="rounded-full bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
-                            >
-                              {lead.status === "replied"
-                                ? "Sent"
-                                : isSending
-                                  ? "Sending…"
-                                  : "Send"}
-                            </button>
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                            Why this lead
+                          </p>
+                          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                            @{lead.x_username}{" "}
+                            {lead.source === "retweeted" ? "retweeted" : "replied to"} this post
+                            {sourceTweet ? ` from ${sourceTweet.authorHandle}` : ""}
+                            {sourceTweet?.url ? (
+                              <>
+                                {" "}
+                                —{" "}
+                                <a
+                                  href={sourceTweet.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="underline decoration-dotted underline-offset-2"
+                                >
+                                  view original →
+                                </a>
+                              </>
+                            ) : null}
+                          </p>
+                          {sourceTweet ? (
+                            <blockquote className="mt-2 border-l-2 border-zinc-300 pl-3 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-300">
+                              {sourceTweet.content}
+                            </blockquote>
                           ) : null}
 
-                          <button
-                            type="button"
-                            onClick={() => void handleSetStatus(lead.id, "replied")}
-                            disabled={isMarking || lead.status === "replied"}
-                            className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                          >
-                            Mark replied
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => void handleSetStatus(lead.id, "skipped")}
-                            disabled={isMarking || lead.status === "skipped"}
-                            className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                          >
-                            Skip
-                          </button>
+                          {lead.source === "replied" && lead.reply_text ? (
+                            <>
+                              <p className="mt-4 text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                                Their reply
+                              </p>
+                              <blockquote className="mt-2 border-l-2 border-zinc-300 pl-3 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-300">
+                                {lead.reply_text}
+                              </blockquote>
+                            </>
+                          ) : null}
                         </div>
-                        {actionError ? (
-                          <p className="mt-2 text-xs text-red-600 dark:text-red-400">
-                            {actionError}
+
+                        {hasDraft ? (
+                          <div className="mt-5 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+                            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                              Outreach draft
+                            </p>
+                            <p className="mt-1 text-sm text-zinc-800 dark:text-zinc-200">
+                              {lead.outreach_draft}
+                            </p>
+                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void handleCopy(lead)}
+                                className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                              >
+                                {copiedId === lead.id ? "Copied" : "Copy"}
+                              </button>
+
+                              {lead.reply_tweet_id ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleSend(lead.id)}
+                                  disabled={isSending || lead.status === "replied"}
+                                  className="rounded-full bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
+                                >
+                                  {lead.status === "replied"
+                                    ? "Sent"
+                                    : isSending
+                                      ? "Sending…"
+                                      : "Send"}
+                                </button>
+                              ) : null}
+
+                              <button
+                                type="button"
+                                onClick={() => void handleSetStatus(lead.id, "replied")}
+                                disabled={isMarking || lead.status === "replied"}
+                                className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                              >
+                                Mark replied
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => void handleSetStatus(lead.id, "skipped")}
+                                disabled={isMarking || lead.status === "skipped"}
+                                className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                              >
+                                Skip
+                              </button>
+                            </div>
+                            {actionError ? (
+                              <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+                                {actionError}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <p className="mt-5 border-t border-zinc-200 pt-4 text-xs text-zinc-400 dark:border-zinc-800 dark:text-zinc-600">
+                            No outreach draft yet — select this lead and click Generate
+                            Drafts to write one.
                           </p>
-                        ) : null}
+                        )}
                       </td>
                     </tr>
                   ) : null}

@@ -68,7 +68,7 @@ export async function POST(request: Request) {
           : await fetchRetweeters(tweetRow.x_tweet_id, cursor);
       page = live;
     } else {
-      page = buildMockAudiencePage(parseMockAudienceCursor(cursor));
+      page = buildMockAudiencePage(parseMockAudienceCursor(cursor), sourceType);
     }
   } catch (error) {
     console.error(
@@ -105,6 +105,7 @@ export async function POST(request: Request) {
     source: sourceType,
     status: "new",
     reply_tweet_id: member.replyTweetId,
+    reply_text: member.replyText,
   }));
 
   const { data: inserted, error: upsertError } = await supabase
