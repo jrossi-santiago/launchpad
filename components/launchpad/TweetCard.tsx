@@ -35,6 +35,16 @@ export function TweetCard({
   onPost,
   postingIds,
   postErrors,
+  alreadyLiked,
+  alreadyFollowedAuthor,
+  onLike,
+  onFollow,
+  isLiking,
+  isFollowing,
+  canLike,
+  canFollow,
+  likeError,
+  followError,
 }: {
   tweet: TweetRow;
   drafts: PostableDraft[];
@@ -49,9 +59,20 @@ export function TweetCard({
   onPost: (draftId: string) => void;
   postingIds: Set<string>;
   postErrors: Record<string, string>;
+  alreadyLiked: boolean;
+  alreadyFollowedAuthor: boolean;
+  onLike: () => void;
+  onFollow: () => void;
+  isLiking: boolean;
+  isFollowing: boolean;
+  canLike: boolean;
+  canFollow: boolean;
+  likeError: string | undefined;
+  followError: string | undefined;
 }) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [confirmingFollow, setConfirmingFollow] = useState(false);
 
   async function handleCopy(draft: DraftRow) {
     if (!draft.draft_text) return;
@@ -112,6 +133,68 @@ export function TweetCard({
             >
               View on X →
             </a>
+          ) : null}
+
+          {xHandle != null ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {alreadyLiked ? (
+                <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-800 dark:bg-green-950 dark:text-green-300">
+                  Liked
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onLike}
+                  disabled={isLiking || !canLike}
+                  title={canLike ? undefined : "You've hit today's like limit."}
+                  className="rounded-full bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
+                >
+                  {isLiking ? "Liking…" : "Like"}
+                </button>
+              )}
+
+              {alreadyFollowedAuthor ? (
+                <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-800 dark:bg-green-950 dark:text-green-300">
+                  Following
+                </span>
+              ) : confirmingFollow ? (
+                <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+                  <span>Follow {tweet.author_handle ?? "this author"}?</span>
+                  <button
+                    type="button"
+                    onClick={onFollow}
+                    disabled={isFollowing || !canFollow}
+                    title={canFollow ? undefined : "You've hit today's follow limit."}
+                    className="rounded-full bg-amber-800 px-3 py-1 font-medium text-white hover:bg-amber-900 disabled:opacity-50 dark:bg-amber-300 dark:text-amber-950 dark:hover:bg-amber-200"
+                  >
+                    {isFollowing ? "Following…" : "Yes, follow"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingFollow(false)}
+                    className="rounded-full px-3 py-1 font-medium text-amber-800 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmingFollow(true)}
+                  disabled={!canFollow}
+                  title={canFollow ? undefined : "You've hit today's follow limit."}
+                  className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                >
+                  Follow
+                </button>
+              )}
+            </div>
+          ) : null}
+          {likeError ? (
+            <p className="mt-2 text-xs text-red-600 dark:text-red-400">{likeError}</p>
+          ) : null}
+          {followError ? (
+            <p className="mt-2 text-xs text-red-600 dark:text-red-400">{followError}</p>
           ) : null}
 
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
