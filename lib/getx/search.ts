@@ -29,11 +29,9 @@ export function buildSearchQuery(params: RadarSearchParams): string {
   return `${params.query} min_faves:${params.minFaves} since_time:${sinceSeconds}`;
 }
 
-// GetXAPI wraps the search response the same way as tweet/detail: an
-// envelope `{ status, msg, data }`. The advanced-search endpoint has NOT
-// been verified against the live API the way tweet/detail was — every
-// shape assumption below lives only in this function so a wrong guess is a
-// one-function fix.
+// Response shape verified against the live API (see the flat-envelope note
+// below) — every shape assumption lives only in this function so a wrong
+// guess is a one-function fix.
 export function mapGetXSearchResponseToResults(response: unknown): {
   results: FetchedTweet[];
   nextCursor: string | null;
@@ -47,16 +45,12 @@ export function mapGetXSearchResponseToResults(response: unknown): {
     throw new Error(`GetXAPI returned an error: ${envelope.error}`);
   }
 
-  const data =
-    envelope.data && typeof envelope.data === "object"
-      ? (envelope.data as Record<string, unknown>)
-      : null;
-
-  if (!data) {
-    throw new Error("GetXAPI response did not include a data object.");
-  }
-
-  const tweets = Array.isArray(data.tweets) ? data.tweets : [];
+  // Unlike tweet/detail, advanced_search is NOT wrapped in a
+  // { status, msg, data } envelope — it's a flat
+  // { query, tweet_count, has_more, next_cursor, tweets: [...] } object.
+  // Verified against the live API. An empty `tweets` array is a valid
+  // "no matches" response, not an error.
+  const tweets = Array.isArray(envelope.tweets) ? envelope.tweets : [];
 
   const results: FetchedTweet[] = tweets.map((raw) => {
     if (!raw || typeof raw !== "object") {
@@ -109,11 +103,7 @@ export function mapGetXSearchResponseToResults(response: unknown): {
   });
 
   const nextCursor =
-    typeof data.next_cursor === "string"
-      ? data.next_cursor
-      : typeof data.nextCursor === "string"
-        ? data.nextCursor
-        : null;
+    typeof envelope.next_cursor === "string" ? envelope.next_cursor : null;
 
   return { results, nextCursor };
 }
