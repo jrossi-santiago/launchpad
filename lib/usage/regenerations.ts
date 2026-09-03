@@ -1,4 +1,5 @@
 import type { createClient } from "@/lib/supabase/server";
+import { startOfCurrentUtcDay } from "@/lib/usage/dailyBoundary";
 
 export const REGENERATION_DAILY_LIMIT = 20;
 export const REGENERATION_EVENT_TYPE = "draft_regenerate";
@@ -10,15 +11,6 @@ export type RegenerationUsage = {
 };
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
-
-// The day boundary is UTC, not the user's local time. This is a deliberate
-// choice for Day 4 simplicity — Day 12 billing may revisit it.
-function startOfCurrentUtcDay(): string {
-  const now = new Date();
-  return new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-  ).toISOString();
-}
 
 export async function getRegenerationUsage(
   supabase: SupabaseServerClient,

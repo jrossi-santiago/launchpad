@@ -1,43 +1,7 @@
+import { authHeaders, extractErrorMessage, getBaseUrl, readBody } from "@/lib/getx/client";
+
 export type XTestConnectionResult = { handle: string };
 export type XPostReplyResult = { postedTweetId: string };
-
-function getBaseUrl(): string {
-  return process.env.GETX_API_BASE_URL ?? "https://api.getxapi.com";
-}
-
-function authHeaders(): Record<string, string> {
-  return {
-    authorization: `Bearer ${process.env.GETX_API_KEY!}`,
-    "content-type": "application/json",
-  };
-}
-
-// Reads a fetch Response body once, as JSON if possible, falling back to
-// text. Used by both call sites below so an error path never double-reads
-// the body stream.
-async function readBody(response: Response): Promise<unknown> {
-  const text = await response.text().catch(() => "");
-  try {
-    return text ? JSON.parse(text) : null;
-  } catch {
-    return text;
-  }
-}
-
-// GetXAPI's error responses across this endpoint family are consistently
-// { error: string, twitter_error_code?: number } — verified against
-// GetXAPI's own documented error responses for /twitter/tweet/create.
-// Never includes authToken/ct0: the caller only ever passes us the parsed
-// response body, never the request credentials.
-function extractErrorMessage(body: unknown, status: number): string {
-  if (body && typeof body === "object" && typeof (body as Record<string, unknown>).error === "string") {
-    return (body as Record<string, unknown>).error as string;
-  }
-  if (typeof body === "string" && body.trim()) {
-    return body.trim();
-  }
-  return `GetXAPI request failed with status ${status}.`;
-}
 
 // GetXAPI has no single "resolve this session to its own handle" endpoint
 // (confirmed against GetXAPI's published OpenAPI spec — the earlier guess

@@ -4,6 +4,7 @@ import { LaunchpadQueue, type QueueItem } from "@/components/launchpad/Launchpad
 import type { PostableDraft } from "@/components/launchpad/TweetCard";
 import type { TweetRow } from "@/lib/getx/tweet";
 import { getRegenerationUsage } from "@/lib/usage/regenerations";
+import { getAllActionUsage } from "@/lib/usage/actions";
 
 export default async function LaunchpadPage() {
   const supabase = await createClient();
@@ -50,12 +51,35 @@ export default async function LaunchpadPage() {
     draftsByTweetId.set(draft.tweet_id, list);
   }
 
+  const { data: successfulActions } = await supabase
+    .from("actions")
+    .select("action_type, target_tweet_id, target_username")
+    .eq("user_id", user.id)
+    .eq("status", "success")
+    .in("action_type", ["like", "follow"]);
+
+  const likedTweetIds = new Set<string>();
+  const followedUsernames = new Set<string>();
+  for (const action of successfulActions ?? []) {
+    if (action.action_type === "like" && action.target_tweet_id) {
+      likedTweetIds.add(action.target_tweet_id);
+    }
+    if (action.action_type === "follow" && action.target_username) {
+      followedUsernames.add(action.target_username);
+    }
+  }
+
   const initialItems: QueueItem[] = tweetRows.map((tweet) => ({
     tweet,
     drafts: draftsByTweetId.get(tweet.id) ?? [],
+    alreadyLiked: likedTweetIds.has(tweet.id),
+    alreadyFollowedAuthor: tweet.author_handle
+      ? followedUsernames.has(tweet.author_handle)
+      : false,
   }));
 
   const initialUsage = await getRegenerationUsage(supabase, user.id);
+  const initialActionUsage = await getAllActionUsage(supabase, user.id);
 
   const { data: xConnection } = await supabase
     .from("x_connections")
@@ -68,6 +92,7 @@ export default async function LaunchpadPage() {
       initialItems={initialItems}
       initialUsage={initialUsage}
       xHandle={xConnection?.x_handle ?? null}
+      initialActionUsage={initialActionUsage}
     />
   );
 }

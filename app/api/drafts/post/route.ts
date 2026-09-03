@@ -4,6 +4,7 @@ import type { DraftRow } from "@/lib/anthropic/drafts";
 import type { TweetRow } from "@/lib/getx/tweet";
 import { buildMockPostReply, postReply } from "@/lib/getx/postReply";
 import { decryptToken } from "@/lib/security/tokenCrypto";
+import { getActionUsage } from "@/lib/usage/actions";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -114,6 +115,17 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: "Connect your X account in Settings first." },
       { status: 400 },
+    );
+  }
+
+  const usage = await getActionUsage(supabase, user.id, "reply");
+  if (usage.remaining <= 0) {
+    return NextResponse.json(
+      {
+        error: `You've used all ${usage.limit} replies for today. Try again tomorrow.`,
+        usage,
+      },
+      { status: 429 },
     );
   }
 

@@ -3,31 +3,42 @@
 import { useState } from "react";
 import type { TweetRow } from "@/lib/getx/tweet";
 import type { RegenerationUsage } from "@/lib/usage/regenerations";
+import type { AllActionUsage } from "@/lib/usage/actions";
 import { TweetCard, type PostableDraft } from "@/components/launchpad/TweetCard";
 import { UsageMeter } from "@/components/launchpad/UsageMeter";
+import { ActionUsageMeter } from "@/components/launchpad/ActionUsageMeter";
 
 export type QueueItem = {
   tweet: TweetRow;
   drafts: PostableDraft[];
+  alreadyLiked: boolean;
+  alreadyFollowedAuthor: boolean;
 };
 
 export function LaunchpadQueue({
   initialItems,
   initialUsage,
   xHandle,
+  initialActionUsage,
 }: {
   initialItems: QueueItem[];
   initialUsage: RegenerationUsage;
   xHandle: string | null;
+  initialActionUsage: AllActionUsage;
 }) {
   const [items, setItems] = useState<QueueItem[]>(initialItems);
   const [usage, setUsage] = useState<RegenerationUsage>(initialUsage);
+  const [actionUsage, setActionUsage] = useState<AllActionUsage>(initialActionUsage);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [regeneratingIds, setRegeneratingIds] = useState<Set<string>>(new Set());
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [regenerateErrors, setRegenerateErrors] = useState<Record<string, string>>({});
   const [postingIds, setPostingIds] = useState<Set<string>>(new Set());
   const [postErrors, setPostErrors] = useState<Record<string, string>>({});
+  const [likingIds, setLikingIds] = useState<Set<string>>(new Set());
+  const [likeErrors, setLikeErrors] = useState<Record<string, string>>({});
+  const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
+  const [followErrors, setFollowErrors] = useState<Record<string, string>>({});
 
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
@@ -52,10 +63,10 @@ export function LaunchpadQueue({
         throw new Error(body?.error ?? `Fetch failed (${response.status}).`);
       }
 
-      const { tweet, drafts } = body as QueueItem;
+      const { tweet, drafts } = body as { tweet: TweetRow; drafts: PostableDraft[] };
 
       setItems((prev) => [
-        { tweet, drafts },
+        { tweet, drafts, alreadyLiked: false, alreadyFollowedAuthor: false },
         ...prev.filter((item) => item.tweet.id !== tweet.id),
       ]);
       setInput("");
@@ -187,6 +198,119 @@ export function LaunchpadQueue({
     }
   }
 
+  async function handleLike(tweetId: string) {
+    if (likingIds.has(tweetId)) return;
+
+    setLikingIds((prev) => new Set(prev).add(tweetId));
+    setLikeErrors((prev) => {
+      const next = { ...prev };
+      delete next[tweetId];
+      return next;
+    });
+
+    try {
+      const response = await fetch("/api/tweets/like", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tweet_id: tweetId }),
+      });
+
+      const body = await response.json().catch(() => null);
+
+      if (response.status === 429) {
+        if (body?.usage) setActionUsage((prev) => ({ ...prev, like: body.usage }));
+        setLikeErrors((prev) => ({
+          ...prev,
+          [tweetId]: body?.error ?? "You've hit today's like limit.",
+        }));
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(body?.error ?? `Like failed (${response.status}).`);
+      }
+
+      const { usage: nextLikeUsage } = body as { usage: AllActionUsage["like"] };
+
+      setItems((prev) =>
+        prev.map((item) =>
+          item.tweet.id === tweetId ? { ...item, alreadyLiked: true } : item,
+        ),
+      );
+      setActionUsage((prev) => ({ ...prev, like: nextLikeUsage }));
+    } catch (err) {
+      setLikeErrors((prev) => ({
+        ...prev,
+        [tweetId]: err instanceof Error ? err.message : "Failed to like that tweet.",
+      }));
+    } finally {
+      setLikingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(tweetId);
+        return next;
+      });
+    }
+  }
+
+  async function handleFollow(tweetId: string) {
+    if (followingIds.has(tweetId)) return;
+
+    setFollowingIds((prev) => new Set(prev).add(tweetId));
+    setFollowErrors((prev) => {
+      const next = { ...prev };
+      delete next[tweetId];
+      return next;
+    });
+
+    try {
+      const response = await fetch("/api/tweets/follow", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tweet_id: tweetId }),
+      });
+
+      const body = await response.json().catch(() => null);
+
+      if (response.status === 429) {
+        if (body?.usage) setActionUsage((prev) => ({ ...prev, follow: body.usage }));
+        setFollowErrors((prev) => ({
+          ...prev,
+          [tweetId]: body?.error ?? "You've hit today's follow limit.",
+        }));
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(body?.error ?? `Follow failed (${response.status}).`);
+      }
+
+      const { authorHandle, usage: nextFollowUsage } = body as {
+        authorHandle: string;
+        usage: AllActionUsage["follow"];
+      };
+
+      setItems((prev) =>
+        prev.map((item) =>
+          item.tweet.author_handle === authorHandle
+            ? { ...item, alreadyFollowedAuthor: true }
+            : item,
+        ),
+      );
+      setActionUsage((prev) => ({ ...prev, follow: nextFollowUsage }));
+    } catch (err) {
+      setFollowErrors((prev) => ({
+        ...prev,
+        [tweetId]: err instanceof Error ? err.message : "Failed to follow that author.",
+      }));
+    } finally {
+      setFollowingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(tweetId);
+        return next;
+      });
+    }
+  }
+
   async function handleDelete(tweetId: string) {
     if (deletingIds.has(tweetId)) return;
 
@@ -276,7 +400,10 @@ export function LaunchpadQueue({
         </div>
       ) : (
         <>
-          <UsageMeter usage={usage} />
+          <div className="flex flex-wrap items-center gap-3">
+            <UsageMeter usage={usage} />
+            <ActionUsageMeter usage={actionUsage} />
+          </div>
           <div className="flex flex-col gap-4">
             {items.map((item) => (
               <div key={item.tweet.id} className="flex flex-col gap-2">
@@ -294,6 +421,16 @@ export function LaunchpadQueue({
                   onPost={(draftId) => void handlePost(draftId)}
                   postingIds={postingIds}
                   postErrors={postErrors}
+                  alreadyLiked={item.alreadyLiked}
+                  alreadyFollowedAuthor={item.alreadyFollowedAuthor}
+                  onLike={() => void handleLike(item.tweet.id)}
+                  onFollow={() => void handleFollow(item.tweet.id)}
+                  isLiking={likingIds.has(item.tweet.id)}
+                  isFollowing={followingIds.has(item.tweet.id)}
+                  canLike={actionUsage.like.remaining > 0}
+                  canFollow={actionUsage.follow.remaining > 0}
+                  likeError={likeErrors[item.tweet.id]}
+                  followError={followErrors[item.tweet.id]}
                 />
                 {regenerateErrors[item.tweet.id] ? (
                   <p className="px-2 text-sm text-red-600 dark:text-red-400">

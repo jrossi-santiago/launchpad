@@ -8,6 +8,35 @@ export function XConnectionForm({ initialHandle }: { initialHandle: string | nul
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [connectedHandle, setConnectedHandle] = useState<string | null>(initialHandle);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
+
+  async function handleDisconnect() {
+    if (disconnecting) return;
+
+    setDisconnecting(true);
+
+    try {
+      const response = await fetch("/api/settings/x-connection", {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.error ?? `Disconnect failed (${response.status}).`);
+      }
+
+      setConnectedHandle(null);
+      setConfirmingDisconnect(false);
+    } catch (err) {
+      setStatus("error");
+      setError(
+        err instanceof Error ? err.message : "Failed to disconnect that X account.",
+      );
+    } finally {
+      setDisconnecting(false);
+    }
+  }
 
   async function handleSave() {
     if (status === "saving" || !authToken.trim() || !ct0.trim()) return;
@@ -100,9 +129,40 @@ export function XConnectionForm({ initialHandle }: { initialHandle: string | nul
         </button>
 
         {connectedHandle ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-800 dark:bg-green-950 dark:text-green-300">
-            Connected as @{connectedHandle}
-          </span>
+          <>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-800 dark:bg-green-950 dark:text-green-300">
+              Connected as @{connectedHandle}
+            </span>
+
+            {confirmingDisconnect ? (
+              <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+                <span>Disconnect this X account?</span>
+                <button
+                  type="button"
+                  onClick={() => void handleDisconnect()}
+                  disabled={disconnecting}
+                  className="rounded-full bg-amber-800 px-3 py-1 font-medium text-white hover:bg-amber-900 disabled:opacity-50 dark:bg-amber-300 dark:text-amber-950 dark:hover:bg-amber-200"
+                >
+                  {disconnecting ? "Disconnecting…" : "Yes, disconnect"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmingDisconnect(false)}
+                  className="rounded-full px-3 py-1 font-medium text-amber-800 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirmingDisconnect(true)}
+                className="rounded-full border border-zinc-300 px-4 py-2 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+              >
+                Disconnect
+              </button>
+            )}
+          </>
         ) : (
           <span className="text-xs text-zinc-500 dark:text-zinc-400">
             Not connected.
