@@ -39,36 +39,72 @@ function extractErrorMessage(body: unknown, status: number): string {
   return `GetXAPI request failed with status ${status}.`;
 }
 
-// UNVERIFIED CONTRACT — see Lesson 3 / AGENTS.md. No GetXAPI documentation
-// for a "resolve login cookies to a handle" endpoint was available when
-// this was written (only tweet/create, tweet/replies, and tweet/thread were
-// documented). This guesses an endpoint modeled on Twitter's own classic
-// `account/verify_credentials` naming and GetXAPI's tweet/detail envelope
-// shape ({ status, msg, data }). Every assumption about path, request
-// shape, and response envelope lives in this one function — if the real
-// endpoint differs, this is a one-function fix; nothing else in the app
-// depends on the guessed shape directly.
+// GetXAPI has no single "resolve this session to its own handle" endpoint
+// (confirmed against GetXAPI's published OpenAPI spec — the earlier guess
+// at /twitter/user/verify_credentials 404'd against the live API). The
+// verified two-step path: POST /twitter/user/likes resolves the auth_token
+// to its owner's numeric userId (a harmless read of your own likes — the
+// `likes` array itself is discarded, only `userId` is used, and this never
+// mutates anything), then GET /twitter/user/info_by_id resolves that
+// userId to the account's handle. Both calls are pool-priced reads
+// ($0.001 each) with no side effects — nothing is liked, followed, or
+// changed on the account just to test the connection.
 export async function testXConnection(
   authToken: string,
   ct0: string,
 ): Promise<XTestConnectionResult> {
-  const response = await fetch(`${getBaseUrl()}/twitter/user/verify_credentials`, {
+  const likesResponse = await fetch(`${getBaseUrl()}/twitter/user/likes`, {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify({ auth_token: authToken, ct0 }),
   });
 
-  const body = await readBody(response);
-
-  if (!response.ok) {
-    throw new Error(extractErrorMessage(body, response.status));
+  const likesBody = await readBody(likesResponse);
+  if (!likesResponse.ok) {
+    throw new Error(extractErrorMessage(likesBody, likesResponse.status));
   }
 
-  return mapGetXTestConnectionResponse(body);
+  const userId = mapGetXUserIdResponse(likesBody);
+
+  const infoResponse = await fetch(
+    `${getBaseUrl()}/twitter/user/info_by_id?userId=${encodeURIComponent(userId)}`,
+    { headers: authHeaders() },
+  );
+
+  const infoBody = await readBody(infoResponse);
+  if (!infoResponse.ok) {
+    throw new Error(extractErrorMessage(infoBody, infoResponse.status));
+  }
+
+  return mapGetXTestConnectionResponse(infoBody);
 }
 
-// Isolates the guessed response-envelope shape (see testXConnection above)
-// so a wrong guess about the field names is a one-function fix.
+// Isolates the /twitter/user/likes response shape — a flat
+// { userId, tweet_count, has_more, next_cursor, likes } object per
+// GetXAPI's spec, not wrapped in { status, msg, data } like tweet/detail.
+// Defensively also checks a data-wrapped shape in case that summary was
+// imprecise, so a wrong guess here is still a one-function fix.
+function mapGetXUserIdResponse(response: unknown): string {
+  if (!response || typeof response !== "object") {
+    throw new Error("GetXAPI did not return a valid response while resolving your account.");
+  }
+
+  const envelope = response as Record<string, unknown>;
+  const container =
+    envelope.data && typeof envelope.data === "object"
+      ? (envelope.data as Record<string, unknown>)
+      : envelope;
+
+  const userId = container.userId ?? container.user_id;
+  if (typeof userId !== "string" && typeof userId !== "number") {
+    throw new Error("GetXAPI did not return an account id while resolving your account.");
+  }
+
+  return String(userId);
+}
+
+// Isolates the /twitter/user/info_by_id response envelope so a wrong guess
+// about the field names is a one-function fix.
 export function mapGetXTestConnectionResponse(response: unknown): XTestConnectionResult {
   if (!response || typeof response !== "object") {
     throw new Error("GetXAPI connection check returned an unexpected response.");
