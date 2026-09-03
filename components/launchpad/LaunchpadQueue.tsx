@@ -2,22 +2,23 @@
 
 import { useState } from "react";
 import type { TweetRow } from "@/lib/getx/tweet";
-import type { DraftRow } from "@/lib/anthropic/drafts";
 import type { RegenerationUsage } from "@/lib/usage/regenerations";
-import { TweetCard } from "@/components/launchpad/TweetCard";
+import { TweetCard, type PostableDraft } from "@/components/launchpad/TweetCard";
 import { UsageMeter } from "@/components/launchpad/UsageMeter";
 
 export type QueueItem = {
   tweet: TweetRow;
-  drafts: DraftRow[];
+  drafts: PostableDraft[];
 };
 
 export function LaunchpadQueue({
   initialItems,
   initialUsage,
+  xHandle,
 }: {
   initialItems: QueueItem[];
   initialUsage: RegenerationUsage;
+  xHandle: string | null;
 }) {
   const [items, setItems] = useState<QueueItem[]>(initialItems);
   const [usage, setUsage] = useState<RegenerationUsage>(initialUsage);
@@ -25,6 +26,8 @@ export function LaunchpadQueue({
   const [regeneratingIds, setRegeneratingIds] = useState<Set<string>>(new Set());
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [regenerateErrors, setRegenerateErrors] = useState<Record<string, string>>({});
+  const [postingIds, setPostingIds] = useState<Set<string>>(new Set());
+  const [postErrors, setPostErrors] = useState<Record<string, string>>({});
 
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
@@ -107,7 +110,7 @@ export function LaunchpadQueue({
       }
 
       const { drafts, usage: nextUsage } = body as {
-        drafts: DraftRow[];
+        drafts: PostableDraft[];
         usage: RegenerationUsage;
       };
 
@@ -127,6 +130,58 @@ export function LaunchpadQueue({
       setRegeneratingIds((prev) => {
         const next = new Set(prev);
         next.delete(tweetId);
+        return next;
+      });
+    }
+  }
+
+  async function handlePost(draftId: string) {
+    if (postingIds.has(draftId)) return;
+
+    setPostingIds((prev) => new Set(prev).add(draftId));
+    setPostErrors((prev) => {
+      const next = { ...prev };
+      delete next[draftId];
+      return next;
+    });
+
+    try {
+      const response = await fetch("/api/drafts/post", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ draft_id: draftId }),
+      });
+
+      const body = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(body?.error ?? `Post failed (${response.status}).`);
+      }
+
+      const { draft: updatedDraft } = body as { draft: PostableDraft };
+
+      setItems((prev) =>
+        prev.map((item) =>
+          item.tweet.id === updatedDraft.tweet_id
+            ? {
+                ...item,
+                tweet: { ...item.tweet, status: "actioned" },
+                drafts: item.drafts.map((d) =>
+                  d.id === updatedDraft.id ? updatedDraft : d,
+                ),
+              }
+            : item,
+        ),
+      );
+    } catch (err) {
+      setPostErrors((prev) => ({
+        ...prev,
+        [draftId]: err instanceof Error ? err.message : "Failed to post that reply.",
+      }));
+    } finally {
+      setPostingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(draftId);
         return next;
       });
     }
@@ -235,6 +290,10 @@ export function LaunchpadQueue({
                   canRegenerate={usage.remaining > 0}
                   onDelete={() => void handleDelete(item.tweet.id)}
                   isDeleting={deletingIds.has(item.tweet.id)}
+                  xHandle={xHandle}
+                  onPost={(draftId) => void handlePost(draftId)}
+                  postingIds={postingIds}
+                  postErrors={postErrors}
                 />
                 {regenerateErrors[item.tweet.id] ? (
                   <p className="px-2 text-sm text-red-600 dark:text-red-400">

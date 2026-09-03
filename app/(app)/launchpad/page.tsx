@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { LaunchpadQueue, type QueueItem } from "@/components/launchpad/LaunchpadQueue";
+import type { PostableDraft } from "@/components/launchpad/TweetCard";
 import type { TweetRow } from "@/lib/getx/tweet";
-import type { DraftRow } from "@/lib/anthropic/drafts";
 import { getRegenerationUsage } from "@/lib/usage/regenerations";
 
 export default async function LaunchpadPage() {
@@ -41,10 +41,10 @@ export default async function LaunchpadPage() {
         .select("*")
         .in("tweet_id", tweetIds)
         .order("variant", { ascending: true })
-    : { data: [] as DraftRow[] };
+    : { data: [] as PostableDraft[] };
 
-  const draftsByTweetId = new Map<string, DraftRow[]>();
-  for (const draft of (drafts ?? []) as DraftRow[]) {
+  const draftsByTweetId = new Map<string, PostableDraft[]>();
+  for (const draft of (drafts ?? []) as PostableDraft[]) {
     const list = draftsByTweetId.get(draft.tweet_id) ?? [];
     list.push(draft);
     draftsByTweetId.set(draft.tweet_id, list);
@@ -57,5 +57,17 @@ export default async function LaunchpadPage() {
 
   const initialUsage = await getRegenerationUsage(supabase, user.id);
 
-  return <LaunchpadQueue initialItems={initialItems} initialUsage={initialUsage} />;
+  const { data: xConnection } = await supabase
+    .from("x_connections")
+    .select("x_handle")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  return (
+    <LaunchpadQueue
+      initialItems={initialItems}
+      initialUsage={initialUsage}
+      xHandle={xConnection?.x_handle ?? null}
+    />
+  );
 }

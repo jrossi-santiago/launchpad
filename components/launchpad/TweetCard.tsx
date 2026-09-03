@@ -11,6 +11,16 @@ const STATUS_LABELS: Record<string, string> = {
   dismissed: "dismissed",
 };
 
+// drafts.posted_at/posted_text/posted_x_tweet_id are plain nullable columns
+// added by migration 0008 — Supabase's select("*") includes them
+// automatically, but lib/anthropic/drafts.ts's DraftRow type is untouched
+// today (see AGENTS.md), so this component extends it locally.
+export type PostableDraft = DraftRow & {
+  posted_at: string | null;
+  posted_text: string | null;
+  posted_x_tweet_id: string | null;
+};
+
 export function TweetCard({
   tweet,
   drafts,
@@ -21,9 +31,13 @@ export function TweetCard({
   canRegenerate,
   onDelete,
   isDeleting,
+  xHandle,
+  onPost,
+  postingIds,
+  postErrors,
 }: {
   tweet: TweetRow;
-  drafts: DraftRow[];
+  drafts: PostableDraft[];
   expanded: boolean;
   onToggle: () => void;
   onRegenerate: () => void;
@@ -31,6 +45,10 @@ export function TweetCard({
   canRegenerate: boolean;
   onDelete: () => void;
   isDeleting: boolean;
+  xHandle: string | null;
+  onPost: (draftId: string) => void;
+  postingIds: Set<string>;
+  postErrors: Record<string, string>;
 }) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -97,28 +115,70 @@ export function TweetCard({
           ) : null}
 
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            {drafts.map((draft) => (
-              <div
-                key={draft.id}
-                className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-950"
-              >
-                <p className="flex-1 text-sm text-zinc-800 dark:text-zinc-200">
-                  {draft.draft_text}
-                </p>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                    {(draft.draft_text ?? "").length}/280
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => void handleCopy(draft)}
-                    className="rounded-full border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                  >
-                    {copiedId === draft.id ? "Copied" : "Copy"}
-                  </button>
+            {drafts.map((draft) => {
+              const tweetHasPostedDraft = drafts.some((d) => d.status === "posted");
+              const isPosting = postingIds.has(draft.id);
+              const postError = postErrors[draft.id];
+
+              return (
+                <div
+                  key={draft.id}
+                  className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-950"
+                >
+                  <p className="flex-1 text-sm text-zinc-800 dark:text-zinc-200">
+                    {draft.draft_text}
+                  </p>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                      {(draft.draft_text ?? "").length}/280
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleCopy(draft)}
+                        className="rounded-full border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                      >
+                        {copiedId === draft.id ? "Copied" : "Copy"}
+                      </button>
+
+                      {xHandle == null ? null : draft.status === "posted" ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-800 dark:bg-green-950 dark:text-green-300">
+                          Posted
+                          {draft.posted_x_tweet_id ? (
+                            <a
+                              href={`https://x.com/i/status/${draft.posted_x_tweet_id}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="underline decoration-dotted underline-offset-2"
+                            >
+                              View →
+                            </a>
+                          ) : null}
+                        </span>
+                      ) : tweetHasPostedDraft ? (
+                        <span className="rounded-full border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-400 dark:border-zinc-700 dark:text-zinc-500">
+                          Already replied
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => onPost(draft.id)}
+                          disabled={isPosting}
+                          className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
+                        >
+                          {isPosting ? "Posting…" : "Post"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {postError ? (
+                    <p className="text-xs text-red-600 dark:text-red-400">
+                      {postError}
+                    </p>
+                  ) : null}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="mt-5 flex items-center gap-3 border-t border-zinc-200 pt-4 dark:border-zinc-800">
