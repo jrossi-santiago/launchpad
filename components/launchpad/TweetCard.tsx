@@ -35,6 +35,9 @@ export function TweetCard({
   onPost,
   postingIds,
   postErrors,
+  onMarkPosted,
+  markingPostedIds,
+  markPostedErrors,
   alreadyLiked,
   alreadyFollowedAuthor,
   onLike,
@@ -64,6 +67,9 @@ export function TweetCard({
   onPost: (draftId: string) => void;
   postingIds: Set<string>;
   postErrors: Record<string, string>;
+  onMarkPosted: (draftId: string) => void;
+  markingPostedIds: Set<string>;
+  markPostedErrors: Record<string, string>;
   alreadyLiked: boolean;
   alreadyFollowedAuthor: boolean;
   onLike: () => void;
@@ -239,6 +245,8 @@ export function TweetCard({
               const tweetHasPostedDraft = drafts.some((d) => d.status === "posted");
               const isPosting = postingIds.has(draft.id);
               const postError = postErrors[draft.id];
+              const isMarkingPosted = markingPostedIds.has(draft.id);
+              const markPostedError = markPostedErrors[draft.id];
 
               return (
                 <div
@@ -261,7 +269,7 @@ export function TweetCard({
                         {copiedId === draft.id ? "Copied" : "Copy"}
                       </button>
 
-                      {xHandle == null ? null : draft.status === "posted" ? (
+                      {draft.status === "posted" ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-800 dark:bg-green-950 dark:text-green-300">
                           Posted
                           {draft.posted_x_tweet_id ? (
@@ -280,20 +288,38 @@ export function TweetCard({
                           Already replied
                         </span>
                       ) : (
-                        <button
-                          type="button"
-                          onClick={() => onPost(draft.id)}
-                          disabled={isPosting}
-                          className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
-                        >
-                          {isPosting ? "Posting…" : "Post"}
-                        </button>
+                        <>
+                          {xHandle != null ? (
+                            <button
+                              type="button"
+                              onClick={() => onPost(draft.id)}
+                              disabled={isPosting}
+                              className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
+                            >
+                              {isPosting ? "Posting…" : "Post"}
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() => onMarkPosted(draft.id)}
+                            disabled={isMarkingPosted}
+                            title="I copied this and replied myself on X — no API call, no risk to your account."
+                            className="rounded-full border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                          >
+                            {isMarkingPosted ? "Marking…" : "Mark posted"}
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
                   {postError ? (
                     <p className="text-xs text-red-600 dark:text-red-400">
                       {postError}
+                    </p>
+                  ) : null}
+                  {markPostedError ? (
+                    <p className="text-xs text-red-600 dark:text-red-400">
+                      {markPostedError}
                     </p>
                   ) : null}
                 </div>
