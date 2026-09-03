@@ -28,15 +28,15 @@ export default async function LeadsPage() {
     tweetIds.length > 0
       ? await supabase
           .from("tweets")
-          .select("id, author_handle, content")
+          .select("id, author_handle, content, url")
           .in("id", tweetIds)
       : { data: [] };
 
   const sourceTweets = (tweets ?? []).map((tweet) => ({
     id: tweet.id as string,
-    label: `${tweet.author_handle ?? "Unknown"}: "${(tweet.content ?? "").slice(0, 60)}${
-      (tweet.content ?? "").length > 60 ? "…" : ""
-    }"`,
+    authorHandle: tweet.author_handle ?? "Unknown",
+    content: tweet.content ?? "",
+    url: (tweet.url as string | null) ?? null,
   }));
 
   const { data: pack } = await supabase

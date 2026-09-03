@@ -6,6 +6,7 @@ export type AudienceMember = {
   bio: string | null;
   followersCount: number | null;
   replyTweetId: string | null; // the reply's own tweet id; always null for retweeters
+  replyText: string | null; // the reply's own text; always null for retweeters
 };
 
 export type AudiencePage = {
@@ -17,7 +18,13 @@ export type AudiencePage = {
 // Shared by both mappers below — GetXAPI's TweetAuthor (replies) and User
 // (retweeters) schemas both carry userName/name/description/followers,
 // verified against https://docs.getxapi.com/openapi.json.
-function mapAuthorToMember(raw: unknown, replyTweetId: string | null = null): AudienceMember | null {
+function mapAuthorToMember(
+  raw: unknown,
+  reply: { replyTweetId: string | null; replyText: string | null } = {
+    replyTweetId: null,
+    replyText: null,
+  },
+): AudienceMember | null {
   if (!raw || typeof raw !== "object") return null;
   const item = raw as Record<string, unknown>;
   const userName = item.userName;
@@ -28,7 +35,8 @@ function mapAuthorToMember(raw: unknown, replyTweetId: string | null = null): Au
     name: typeof item.name === "string" ? item.name : null,
     bio: typeof item.description === "string" ? item.description : null,
     followersCount: typeof item.followers === "number" ? item.followers : null,
-    replyTweetId,
+    replyTweetId: reply.replyTweetId,
+    replyText: reply.replyText,
   };
 }
 
@@ -58,7 +66,8 @@ export function mapGetXRepliesResponse(response: unknown): AudiencePage {
         : typeof replyTweet.id === "number"
           ? String(replyTweet.id)
           : null;
-    const member = mapAuthorToMember(replyTweet.author, replyTweetId);
+    const replyText = typeof replyTweet.text === "string" ? replyTweet.text : null;
+    const member = mapAuthorToMember(replyTweet.author, { replyTweetId, replyText });
     if (member) members.push(member);
   }
 
@@ -139,8 +148,12 @@ export function parseMockAudienceCursor(cursor: string | null): number {
 
 // Deterministic, no Math.random(). pageIndex 1..5 each return 5 members;
 // page 5 returns hasMore: false so the "page N of 5" progress UI is
-// testable end-to-end with no GETX_API_KEY set.
-export function buildMockAudiencePage(pageIndex: number): AudiencePage {
+// testable end-to-end with no GETX_API_KEY set. sourceType only affects
+// replyTweetId/replyText — retweeters never carry a reply of their own.
+export function buildMockAudiencePage(
+  pageIndex: number,
+  sourceType: "replied" | "retweeted",
+): AudiencePage {
   const page = Math.min(Math.max(Math.trunc(pageIndex), 1), 5);
   const members: AudienceMember[] = Array.from({ length: 5 }, (_, i) => {
     const n = (page - 1) * 5 + i + 1;
@@ -149,7 +162,11 @@ export function buildMockAudiencePage(pageIndex: number): AudiencePage {
       name: `Mock Audience Member ${n}`,
       bio: "Set GETX_API_KEY to pull this person's real bio.",
       followersCount: n * 113,
-      replyTweetId: null,
+      replyTweetId: sourceType === "replied" ? `mock-reply-${n}` : null,
+      replyText:
+        sourceType === "replied"
+          ? `[Mock reply ${n}] Great point — set GETX_API_KEY to pull this person's real reply text.`
+          : null,
     };
   });
 
