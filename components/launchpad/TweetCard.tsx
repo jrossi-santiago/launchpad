@@ -45,6 +45,11 @@ export function TweetCard({
   canFollow,
   likeError,
   followError,
+  onPullAudience,
+  isPullingAudience,
+  audienceProgress,
+  audienceResult,
+  audienceError,
 }: {
   tweet: TweetRow;
   drafts: PostableDraft[];
@@ -69,6 +74,11 @@ export function TweetCard({
   canFollow: boolean;
   likeError: string | undefined;
   followError: string | undefined;
+  onPullAudience: () => void;
+  isPullingAudience: boolean;
+  audienceProgress: string | undefined;
+  audienceResult: string | undefined;
+  audienceError: string | undefined;
 }) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -133,6 +143,33 @@ export function TweetCard({
             >
               View on X →
             </a>
+          ) : null}
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onPullAudience}
+              disabled={isPullingAudience}
+              className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+            >
+              {isPullingAudience
+                ? "Pulling…"
+                : audienceResult
+                  ? "Pull Audience Again"
+                  : "Pull Audience"}
+            </button>
+            {audienceProgress ? (
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                {audienceProgress}
+              </span>
+            ) : audienceResult ? (
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                {audienceResult}
+              </span>
+            ) : null}
+          </div>
+          {audienceError ? (
+            <p className="mt-2 text-xs text-red-600 dark:text-red-400">{audienceError}</p>
           ) : null}
 
           {xHandle != null ? (

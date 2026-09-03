@@ -39,6 +39,10 @@ export function LaunchpadQueue({
   const [likeErrors, setLikeErrors] = useState<Record<string, string>>({});
   const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
   const [followErrors, setFollowErrors] = useState<Record<string, string>>({});
+  const [pullingAudienceIds, setPullingAudienceIds] = useState<Set<string>>(new Set());
+  const [audienceProgress, setAudienceProgress] = useState<Record<string, string>>({});
+  const [audienceResults, setAudienceResults] = useState<Record<string, string>>({});
+  const [audienceErrors, setAudienceErrors] = useState<Record<string, string>>({});
 
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
@@ -311,6 +315,83 @@ export function LaunchpadQueue({
     }
   }
 
+  async function handlePullAudience(tweetId: string) {
+    if (pullingAudienceIds.has(tweetId)) return;
+
+    setPullingAudienceIds((prev) => new Set(prev).add(tweetId));
+    setAudienceErrors((prev) => {
+      const next = { ...prev };
+      delete next[tweetId];
+      return next;
+    });
+
+    let peopleFound = 0;
+    let newLeadsAdded = 0;
+    const sourceLabels: Record<"replied" | "retweeted", string> = {
+      replied: "repliers",
+      retweeted: "retweeters",
+    };
+
+    try {
+      for (const sourceType of ["replied", "retweeted"] as const) {
+        let cursor: string | null = null;
+
+        for (let pageNum = 1; pageNum <= 5; pageNum += 1) {
+          setAudienceProgress((prev) => ({
+            ...prev,
+            [tweetId]: `Pulling ${sourceLabels[sourceType]}… page ${pageNum} of 5`,
+          }));
+
+          const response = await fetch("/api/tweets/pull-audience", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ tweet_id: tweetId, source_type: sourceType, cursor }),
+          });
+
+          const body = await response.json().catch(() => null);
+
+          if (!response.ok) {
+            throw new Error(body?.error ?? `Pull audience failed (${response.status}).`);
+          }
+
+          const { leads, peopleFound: pageFound, nextCursor, hasMore } = body as {
+            leads: unknown[];
+            peopleFound: number;
+            nextCursor: string | null;
+            hasMore: boolean;
+          };
+
+          peopleFound += pageFound;
+          newLeadsAdded += leads.length;
+
+          cursor = nextCursor;
+          if (!hasMore || pageNum === 5) break;
+        }
+      }
+
+      setAudienceResults((prev) => ({
+        ...prev,
+        [tweetId]: `${peopleFound} people found · ${newLeadsAdded} new leads added`,
+      }));
+    } catch (err) {
+      setAudienceErrors((prev) => ({
+        ...prev,
+        [tweetId]: err instanceof Error ? err.message : "Failed to pull that tweet's audience.",
+      }));
+    } finally {
+      setAudienceProgress((prev) => {
+        const next = { ...prev };
+        delete next[tweetId];
+        return next;
+      });
+      setPullingAudienceIds((prev) => {
+        const next = new Set(prev);
+        next.delete(tweetId);
+        return next;
+      });
+    }
+  }
+
   async function handleDelete(tweetId: string) {
     if (deletingIds.has(tweetId)) return;
 
@@ -431,6 +512,11 @@ export function LaunchpadQueue({
                   canFollow={actionUsage.follow.remaining > 0}
                   likeError={likeErrors[item.tweet.id]}
                   followError={followErrors[item.tweet.id]}
+                  onPullAudience={() => void handlePullAudience(item.tweet.id)}
+                  isPullingAudience={pullingAudienceIds.has(item.tweet.id)}
+                  audienceProgress={audienceProgress[item.tweet.id] || undefined}
+                  audienceResult={audienceResults[item.tweet.id]}
+                  audienceError={audienceErrors[item.tweet.id]}
                 />
                 {regenerateErrors[item.tweet.id] ? (
                   <p className="px-2 text-sm text-red-600 dark:text-red-400">
