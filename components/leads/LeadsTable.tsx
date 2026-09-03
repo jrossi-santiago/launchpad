@@ -62,6 +62,10 @@ export function LeadsTable({
   const [sendingIds, setSendingIds] = useState<Set<string>>(new Set());
   const [markingIds, setMarkingIds] = useState<Set<string>>(new Set());
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [confirmingBulkDelete, setConfirmingBulkDelete] = useState(false);
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
 
   const sourceTweetById = useMemo(() => {
     const map = new Map<string, SourceTweet>();
@@ -230,6 +234,48 @@ export function LeadsTable({
     }
   }
 
+  async function handleDelete(leadIds: string[]) {
+    if (leadIds.length === 0) return;
+
+    setDeletingIds((prev) => {
+      const next = new Set(prev);
+      for (const id of leadIds) next.add(id);
+      return next;
+    });
+    setDeleteError(null);
+
+    try {
+      const response = await fetch("/api/leads/delete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ lead_ids: leadIds }),
+      });
+
+      const body = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(body?.error ?? `Delete failed (${response.status}).`);
+      }
+
+      const idSet = new Set(leadIds);
+      setLeads((prev) => prev.filter((lead) => !idSet.has(lead.id)));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const id of leadIds) next.delete(id);
+        return next;
+      });
+      setExpandedId((prev) => (prev && idSet.has(prev) ? null : prev));
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Failed to delete leads.");
+    } finally {
+      setDeletingIds((prev) => {
+        const next = new Set(prev);
+        for (const id of leadIds) next.delete(id);
+        return next;
+      });
+    }
+  }
+
   if (leads.length === 0) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-300 bg-white px-8 py-24 text-center dark:border-zinc-700 dark:bg-zinc-900">
@@ -298,6 +344,44 @@ export function LeadsTable({
           ) : null}
           {generateError ? (
             <span className="text-xs text-red-600 dark:text-red-400">{generateError}</span>
+          ) : null}
+
+          {confirmingBulkDelete ? (
+            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+              <span>
+                Delete {selectedIds.size} lead{selectedIds.size === 1 ? "" : "s"}?
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const ids = Array.from(selectedIds);
+                  setConfirmingBulkDelete(false);
+                  void handleDelete(ids);
+                }}
+                className="rounded-full bg-red-700 px-3 py-1 font-medium text-white hover:bg-red-800 dark:bg-red-400 dark:text-red-950 dark:hover:bg-red-300"
+              >
+                Yes, delete
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmingBulkDelete(false)}
+                className="rounded-full px-3 py-1 font-medium text-red-800 hover:bg-red-100 dark:text-red-300 dark:hover:bg-red-900"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmingBulkDelete(true)}
+              className="rounded-full border border-red-300 px-4 py-2 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950"
+            >
+              Delete ({selectedIds.size} selected)
+            </button>
+          )}
+
+          {deleteError ? (
+            <span className="text-xs text-red-600 dark:text-red-400">{deleteError}</span>
           ) : null}
         </div>
       ) : null}
@@ -512,6 +596,41 @@ export function LeadsTable({
                             Drafts to write one.
                           </p>
                         )}
+
+                        <div className="mt-4 flex items-center gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+                          {confirmingDeleteId === lead.id ? (
+                            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+                              <span>Delete this lead?</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setConfirmingDeleteId(null);
+                                  void handleDelete([lead.id]);
+                                }}
+                                disabled={deletingIds.has(lead.id)}
+                                className="rounded-full bg-red-700 px-3 py-1 font-medium text-white hover:bg-red-800 disabled:opacity-50 dark:bg-red-400 dark:text-red-950 dark:hover:bg-red-300"
+                              >
+                                Yes, delete
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmingDeleteId(null)}
+                                className="rounded-full px-3 py-1 font-medium text-red-800 hover:bg-red-100 dark:text-red-300 dark:hover:bg-red-900"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmingDeleteId(lead.id)}
+                              disabled={deletingIds.has(lead.id)}
+                              className="rounded-full border border-red-300 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950"
+                            >
+                              {deletingIds.has(lead.id) ? "Deleting…" : "Delete"}
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ) : null}
