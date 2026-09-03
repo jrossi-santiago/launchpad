@@ -44,29 +44,44 @@ export function parseStatusId(input: string): string | null {
   }
 }
 
-export function mapGetXResponseToTweetRow(data: unknown): FetchedTweet {
-  if (!data || typeof data !== "object") {
+// GetXAPI wraps the tweet in { status, msg, data } and uses camelCase
+// field names. Verified against GET /twitter/tweet/detail?id=20.
+export function mapGetXResponseToTweetRow(response: unknown): FetchedTweet {
+  if (!response || typeof response !== "object") {
     throw new Error("GetXAPI response was not a valid object.");
   }
 
-  const value = data as Record<string, unknown>;
-  const user =
-    value.user && typeof value.user === "object"
-      ? (value.user as Record<string, unknown>)
+  const envelope = response as Record<string, unknown>;
+  if (typeof envelope.error === "string") {
+    throw new Error(`GetXAPI returned an error: ${envelope.error}`);
+  }
+
+  const data =
+    envelope.data && typeof envelope.data === "object"
+      ? (envelope.data as Record<string, unknown>)
       : null;
 
-  const idStr = value.id_str;
-  const fullText = value.full_text;
-  const screenName = user?.screen_name;
-  const favoriteCount = value.favorite_count;
-  const retweetCount = value.retweet_count;
-  const replyCount = value.reply_count;
+  if (!data) {
+    throw new Error("GetXAPI response did not include a data object.");
+  }
+
+  const author =
+    data.author && typeof data.author === "object"
+      ? (data.author as Record<string, unknown>)
+      : null;
+
+  const id = data.id;
+  const text = data.text;
+  const userName = author?.userName;
+  const likeCount = data.likeCount;
+  const retweetCount = data.retweetCount;
+  const replyCount = data.replyCount;
 
   if (
-    typeof idStr !== "string" ||
-    typeof fullText !== "string" ||
-    typeof screenName !== "string" ||
-    typeof favoriteCount !== "number" ||
+    typeof id !== "string" ||
+    typeof text !== "string" ||
+    typeof userName !== "string" ||
+    typeof likeCount !== "number" ||
     typeof retweetCount !== "number" ||
     typeof replyCount !== "number"
   ) {
@@ -76,28 +91,31 @@ export function mapGetXResponseToTweetRow(data: unknown): FetchedTweet {
   }
 
   const metrics: TweetMetrics = {
-    like_count: favoriteCount,
+    like_count: likeCount,
     retweet_count: retweetCount,
     reply_count: replyCount,
   };
 
   return {
-    x_tweet_id: idStr,
-    author_handle: `@${screenName}`,
-    content: fullText,
-    url: `https://x.com/${screenName}/status/${idStr}`,
+    x_tweet_id: id,
+    author_handle: `@${userName}`,
+    content: text,
+    url:
+      typeof data.url === "string"
+        ? data.url
+        : `https://x.com/${userName}/status/${id}`,
     metrics,
-    engagement_score: favoriteCount + retweetCount + replyCount,
+    engagement_score: likeCount + retweetCount + replyCount,
   };
 }
 
 export async function fetchTweetDetail(id: string): Promise<FetchedTweet> {
+  const baseUrl = process.env.GETX_API_BASE_URL ?? "https://api.getxapi.com";
   const response = await fetch(
-    `${process.env.GETX_API_BASE_URL}/twitter/tweet/detail?tweet_id=${id}`,
+    `${baseUrl}/twitter/tweet/detail?id=${id}`,
     {
       headers: {
-        "x-rapidapi-key": process.env.GETX_API_KEY!,
-        "x-rapidapi-host": process.env.GETX_API_HOST!,
+        authorization: `Bearer ${process.env.GETX_API_KEY!}`,
       },
     },
   );
