@@ -2,18 +2,19 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import {
   buildMockSearchResults,
+  buildWhyItMatched,
   fetchTweetSearch,
   type RadarResult,
 } from "@/lib/getx/search";
 import type { FetchedTweet } from "@/lib/getx/tweet";
 import { recordRadarSearchPage } from "@/lib/usage/radar";
 
-const PRODUCT = "Top";
 const CACHE_WINDOW_MS = 6 * 60 * 60 * 1000;
 
 async function attachAlreadySaved(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
+  query: string,
   results: FetchedTweet[],
 ): Promise<RadarResult[]> {
   if (results.length === 0) return [];
@@ -34,6 +35,7 @@ async function attachAlreadySaved(
   return results.map((result) => ({
     ...result,
     alreadySaved: savedIds.has(result.x_tweet_id),
+    whyItMatched: buildWhyItMatched(result.content, query),
   }));
 }
 
@@ -73,10 +75,21 @@ export async function POST(request: Request) {
     body && typeof body === "object" && typeof (body as { range_hours?: unknown }).range_hours === "number"
       ? (body as { range_hours: number }).range_hours
       : NaN;
+  const product =
+    body &&
+    typeof body === "object" &&
+    ((body as { product?: unknown }).product === "Top" ||
+      (body as { product?: unknown }).product === "Latest")
+      ? (body as { product: "Top" | "Latest" }).product
+      : null;
+  const cursor =
+    body && typeof body === "object" && typeof (body as { cursor?: unknown }).cursor === "string"
+      ? (body as { cursor: string }).cursor
+      : "";
 
-  if (!query || !Number.isFinite(minFaves) || !Number.isFinite(rangeHours)) {
+  if (!query || !Number.isFinite(minFaves) || !Number.isFinite(rangeHours) || !product) {
     return NextResponse.json(
-      { error: "Missing or invalid query, min_faves, or range_hours." },
+      { error: "Missing or invalid query, min_faves, range_hours, or product." },
       { status: 400 },
     );
   }
@@ -87,9 +100,10 @@ export async function POST(request: Request) {
       .select("*")
       .eq("user_id", user.id)
       .eq("query", query)
-      .eq("product", PRODUCT)
+      .eq("product", product)
       .eq("min_faves", minFaves)
       .eq("range_hours", rangeHours)
+      .eq("cursor", cursor)
       .maybeSingle();
 
     if (cacheError) throw cacheError;
@@ -98,12 +112,13 @@ export async function POST(request: Request) {
       const results = await attachAlreadySaved(
         supabase,
         user.id,
+        query,
         cached.results as FetchedTweet[],
       );
       return NextResponse.json({ results, nextCursor: cached.next_cursor ?? null });
     }
 
-    const params = { query, minFaves, rangeHours };
+    const params = { query, minFaves, rangeHours, product, cursor };
     const { results: fetched, nextCursor } = process.env.GETX_API_KEY
       ? await fetchTweetSearch(params)
       : buildMockSearchResults(params);
@@ -112,28 +127,28 @@ export async function POST(request: Request) {
       {
         user_id: user.id,
         query,
-        product: PRODUCT,
+        product,
         min_faves: minFaves,
         range_hours: rangeHours,
-        cursor: null,
+        cursor,
         next_cursor: nextCursor,
         results: fetched,
         fetched_at: new Date().toISOString(),
       },
-      { onConflict: "user_id,query,product,min_faves,range_hours" },
+      { onConflict: "user_id,query,product,min_faves,range_hours,cursor" },
     );
 
     if (upsertError) throw upsertError;
 
     await recordRadarSearchPage(supabase, user.id, {
       query,
-      product: PRODUCT,
+      product,
       minFaves,
       rangeHours,
-      cursor: null,
+      cursor,
     });
 
-    const results = await attachAlreadySaved(supabase, user.id, fetched);
+    const results = await attachAlreadySaved(supabase, user.id, query, fetched);
     return NextResponse.json({ results, nextCursor });
   } catch (error) {
     console.error("radar/search failed", error);
