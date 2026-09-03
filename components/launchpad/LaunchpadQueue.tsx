@@ -35,6 +35,8 @@ export function LaunchpadQueue({
   const [regenerateErrors, setRegenerateErrors] = useState<Record<string, string>>({});
   const [postingIds, setPostingIds] = useState<Set<string>>(new Set());
   const [postErrors, setPostErrors] = useState<Record<string, string>>({});
+  const [markingPostedIds, setMarkingPostedIds] = useState<Set<string>>(new Set());
+  const [markPostedErrors, setMarkPostedErrors] = useState<Record<string, string>>({});
   const [likingIds, setLikingIds] = useState<Set<string>>(new Set());
   const [likeErrors, setLikeErrors] = useState<Record<string, string>>({});
   const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
@@ -195,6 +197,59 @@ export function LaunchpadQueue({
       }));
     } finally {
       setPostingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(draftId);
+        return next;
+      });
+    }
+  }
+
+  async function handleMarkPosted(draftId: string) {
+    if (markingPostedIds.has(draftId)) return;
+
+    setMarkingPostedIds((prev) => new Set(prev).add(draftId));
+    setMarkPostedErrors((prev) => {
+      const next = { ...prev };
+      delete next[draftId];
+      return next;
+    });
+
+    try {
+      const response = await fetch("/api/drafts/mark-posted", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ draft_id: draftId }),
+      });
+
+      const body = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(body?.error ?? `Mark posted failed (${response.status}).`);
+      }
+
+      const { draft: updatedDraft } = body as { draft: PostableDraft };
+
+      setItems((prev) =>
+        prev.map((item) =>
+          item.tweet.id === updatedDraft.tweet_id
+            ? {
+                ...item,
+                tweet: { ...item.tweet, status: "actioned" },
+                drafts: item.drafts.map((d) =>
+                  d.id === updatedDraft.id ? updatedDraft : d,
+                ),
+              }
+            : item,
+        ),
+      );
+    } catch (err) {
+      setMarkPostedErrors((prev) => ({
+        ...prev,
+        [draftId]:
+          err instanceof Error ? err.message : "Failed to mark that draft as posted.",
+      }));
+    } finally {
+      setMarkingPostedIds((prev) => {
         const next = new Set(prev);
         next.delete(draftId);
         return next;
@@ -502,6 +557,9 @@ export function LaunchpadQueue({
                   onPost={(draftId) => void handlePost(draftId)}
                   postingIds={postingIds}
                   postErrors={postErrors}
+                  onMarkPosted={(draftId) => void handleMarkPosted(draftId)}
+                  markingPostedIds={markingPostedIds}
+                  markPostedErrors={markPostedErrors}
                   alreadyLiked={item.alreadyLiked}
                   alreadyFollowedAuthor={item.alreadyFollowedAuthor}
                   onLike={() => void handleLike(item.tweet.id)}
