@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import type { TweetRow } from "@/lib/getx/tweet";
-import { buildMockFavorite, favoriteTweet } from "@/lib/getx/actions";
-import { decryptToken } from "@/lib/security/tokenCrypto";
+import { XConnectionError, likeAs, type XConnectionRow } from "@/lib/x/writer";
 import { getActionUsage } from "@/lib/usage/actions";
 
 export async function POST(request: Request) {
@@ -115,25 +114,10 @@ export async function POST(request: Request) {
     if (error) console.error("tweets/like failed to record failed action", error);
   }
 
-  let authToken: string;
   try {
-    authToken = decryptToken(connection.auth_token_encrypted);
-    decryptToken(connection.ct0_encrypted);
-  } catch (error) {
-    console.error("tweets/like failed to decrypt connection", error);
-    await recordFailedAction();
-    return NextResponse.json(
-      { error: "Your X connection needs to be reconnected in Settings." },
-      { status: 400 },
-    );
-  }
-
-  try {
-    const result = process.env.GETX_API_KEY
-      ? await favoriteTweet(authToken, tweetRow.x_tweet_id)
-      : buildMockFavorite();
+    const result = await likeAs(supabase, connection as XConnectionRow, tweetRow.x_tweet_id);
     if (!result.liked) {
-      throw new Error("GetXAPI did not confirm the like.");
+      throw new Error("X did not confirm the like.");
     }
 
     const { error: actionError } = await supabase.from("actions").insert({
@@ -169,7 +153,7 @@ export async function POST(request: Request) {
             ? error.message
             : "Failed to like that tweet. Please try again.",
       },
-      { status: 502 },
+      { status: error instanceof XConnectionError ? 400 : 502 },
     );
   }
 }
