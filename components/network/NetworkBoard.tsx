@@ -8,15 +8,19 @@ import type { SendState } from "@/components/network/NetworkCard";
 export function NetworkBoard({
   initialStacks,
   maxProfiles,
+  initialError = null,
 }: {
   initialStacks: NetworkStack[];
   maxProfiles: number;
+  // Set when the server-side read failed, so the board opens saying why
+  // rather than looking like an empty Network.
+  initialError?: string | null;
 }) {
   const [stacks, setStacks] = useState<NetworkStack[]>(initialStacks);
   const [handleInput, setHandleInput] = useState("");
   const [adding, setAdding] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError);
   const [activeIndexes, setActiveIndexes] = useState<Record<string, number>>({});
   const [focusedColumn, setFocusedColumn] = useState(0);
   const [sendStates, setSendStates] = useState<Record<string, SendState>>({});
@@ -268,7 +272,9 @@ export function NetworkBoard({
         </p>
 
         {error ? (
-          <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>
+          <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-400">
+            {error}
+          </p>
         ) : null}
       </div>
 
