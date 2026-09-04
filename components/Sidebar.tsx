@@ -7,6 +7,7 @@ import { LogoutButton } from "@/components/LogoutButton";
 const primaryNav = [
   { href: "/home", label: "Home" },
   { href: "/radar", label: "Radar" },
+  { href: "/network", label: "Network" },
   { href: "/launchpad", label: "Launchpad" },
   { href: "/leads", label: "Leads" },
 ] as const;

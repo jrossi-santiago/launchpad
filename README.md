@@ -59,6 +59,7 @@ app/
     layout.tsx               Sidebar + session check
     home/page.tsx             Empty state
     radar/page.tsx            "Coming next" placeholder
+    network/page.tsx          Card-stack view of watched accounts' latest posts
     launchpad/page.tsx        "Coming next" placeholder
     leads/page.tsx            "Coming next" placeholder
     settings/page.tsx         Email, plan, logout
@@ -68,3 +69,34 @@ proxy.ts                    Refreshes the Supabase session cookie on every reque
                              (Next.js 16's renamed middleware.ts)
 supabase/migrations/        Full 7-table schema, RLS enabled
 ```
+
+## Network
+
+Network watches a set of X accounts and lays their latest original posts out
+as one card stack per person, so you can flip through them and send the good
+ones into the Launchpad queue (where they get the same three Haiku reply
+drafts a Radar result does).
+
+Replies and retweets are filtered out: a stack only ever holds a person's own
+original posts.
+
+Two things fill a stack, because GetXAPI monitoring is forward-only from a
+baseline taken when the monitor is created and has no backfill:
+
+- **Polling** `GET /twitter/user/tweets` runs when the Network page loads and
+  when you press Refresh. There is no background timer. This is the path that
+  gives a newly watched account a stack at all, and it works with nothing but
+  `GETX_API_KEY` set (and returns mock posts without it).
+- **Monitoring** `POST /twitter/monitor/add` pushes new posts to
+  `/api/network/webhook` as they happen. It needs `NEXT_PUBLIC_APP_URL` set to
+  a public HTTPS origin — GetXAPI rejects localhost and private addresses — and
+  monitoring enabled on the GetXAPI plan. Without either, a profile falls back
+  to poll-only and says so under its stack.
+
+Removing an account calls `POST /twitter/monitor/remove` rather than pausing,
+because removal is the only thing that frees the monitoring plan slot. The
+per-user cap is 12 accounts.
+
+Cards are never deleted when you send or skip them — the row stays with its
+state flipped, which is what stops the next poll from putting a post you
+already dealt with back on top of the stack.
