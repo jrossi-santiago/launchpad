@@ -4,6 +4,10 @@ import { useState } from "react";
 import type { TweetRow } from "@/lib/getx/tweet";
 import type { DraftRow } from "@/lib/anthropic/drafts";
 
+// Mirrors GROK_VARIANT in lib/anthropic/drafts.ts. Kept local so this client
+// component does not pull the server-side drafts module into the browser bundle.
+const GROK_VARIANT = 3;
+
 const STATUS_LABELS: Record<string, string> = {
   queued: "queued",
   drafted: "drafted",
@@ -247,12 +251,21 @@ export function TweetCard({
               const postError = postErrors[draft.id];
               const isMarkingPosted = markingPostedIds.has(draft.id);
               const markPostedError = markPostedErrors[draft.id];
+              const isGrokQuestion = draft.variant === GROK_VARIANT;
 
               return (
                 <div
                   key={draft.id}
                   className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-950"
                 >
+                  {isGrokQuestion ? (
+                    <span
+                      className="w-fit rounded-full bg-sky-100 px-2.5 py-0.5 text-xs font-medium text-sky-800 dark:bg-sky-950 dark:text-sky-300"
+                      title="Tags @grok so it answers publicly in the thread."
+                    >
+                      Ask @grok
+                    </span>
+                  ) : null}
                   <p className="flex-1 text-sm text-zinc-800 dark:text-zinc-200">
                     {draft.draft_text}
                   </p>
