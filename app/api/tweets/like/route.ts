@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import type { TweetRow } from "@/lib/getx/tweet";
+import { upsertTweetRow, type TweetRow } from "@/lib/getx/tweet";
+import { cardToFetchedTweet, loadCard } from "@/lib/network/cardTweet";
 import { XConnectionError, likeAs, type XConnectionRow } from "@/lib/x/writer";
 import { getActionUsage } from "@/lib/usage/actions";
 
@@ -15,35 +16,63 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json().catch(() => null);
-  const tweetId =
-    body && typeof body === "object" && typeof (body as { tweet_id?: unknown }).tweet_id === "string"
-      ? (body as { tweet_id: string }).tweet_id
-      : null;
+  const payload = (body ?? {}) as { tweet_id?: unknown; card_id?: unknown };
+  const tweetId = typeof payload.tweet_id === "string" ? payload.tweet_id : null;
+  // A Feed card has no `tweets` row until something puts one there, and
+  // `actions.target_tweet_id` points at that table — so liking from the
+  // Feed resolves the card first. The card's own state is deliberately
+  // left alone: a like is not a decision to stop replying, so the post
+  // stays in the Feed.
+  const cardId = typeof payload.card_id === "string" ? payload.card_id : null;
 
-  if (!tweetId) {
-    return NextResponse.json({ error: "Missing tweet_id." }, { status: 400 });
-  }
-
-  const { data: tweet, error: tweetError } = await supabase
-    .from("tweets")
-    .select("*")
-    .eq("id", tweetId)
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (tweetError) {
-    console.error("tweets/like failed to load tweet", tweetError);
+  if (!tweetId && !cardId) {
     return NextResponse.json(
-      { error: "Failed to like that tweet. Please try again." },
-      { status: 502 },
+      { error: "Missing tweet_id or card_id." },
+      { status: 400 },
     );
   }
 
-  if (!tweet) {
-    return NextResponse.json({ error: "Tweet not found." }, { status: 404 });
-  }
+  let tweetRow: TweetRow;
 
-  const tweetRow = tweet as TweetRow;
+  if (tweetId) {
+    const { data: tweet, error: tweetError } = await supabase
+      .from("tweets")
+      .select("*")
+      .eq("id", tweetId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (tweetError) {
+      console.error("tweets/like failed to load tweet", tweetError);
+      return NextResponse.json(
+        { error: "Failed to like that tweet. Please try again." },
+        { status: 502 },
+      );
+    }
+
+    if (!tweet) {
+      return NextResponse.json({ error: "Tweet not found." }, { status: 404 });
+    }
+
+    tweetRow = tweet as TweetRow;
+  } else {
+    try {
+      const card = await loadCard(supabase, user.id, cardId as string);
+      if (!card) {
+        return NextResponse.json(
+          { error: "That post isn't in your Network." },
+          { status: 404 },
+        );
+      }
+      tweetRow = await upsertTweetRow(supabase, user.id, cardToFetchedTweet(card));
+    } catch (error) {
+      console.error("tweets/like failed to resolve card", error);
+      return NextResponse.json(
+        { error: "Failed to like that tweet. Please try again." },
+        { status: 502 },
+      );
+    }
+  }
 
   const { data: existingLike, error: existingLikeError } = await supabase
     .from("actions")

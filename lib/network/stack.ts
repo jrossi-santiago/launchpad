@@ -188,3 +188,32 @@ export async function syncTweets(
   if (error) throw error;
   return window.length;
 }
+
+// One card, carrying the account it came from — what a per-profile stack
+// leaves implicit in its column header, and what a single mixed stream has
+// to say on every card.
+export type FeedCard = NetworkCard & {
+  profile_id: string;
+  handle: string;
+  display_name: string | null;
+};
+
+// A phone has no room for one column per account, so the Feed is the same
+// cards in one reverse-chronological stream. Derived from the stacks
+// rather than queried separately: same rows, same window, same
+// already-decided filtering, no second trip to the database.
+//
+// The per-stack STACK_WINDOW slice still applies first, so one very
+// prolific account can contribute at most its window to the stream.
+export function flattenStacks(stacks: NetworkStack[]): FeedCard[] {
+  return stacks
+    .flatMap((stack) =>
+      stack.cards.map((card) => ({
+        ...card,
+        profile_id: stack.profile.id,
+        handle: stack.profile.handle,
+        display_name: stack.profile.display_name,
+      })),
+    )
+    .sort(byNewest);
+}

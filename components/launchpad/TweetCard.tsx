@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { TweetRow } from "@/lib/getx/tweet";
 import type { DraftRow } from "@/lib/anthropic/drafts";
+import { copyAndOpenReply } from "@/lib/x/intent";
 
 // Mirrors GROK_VARIANT in lib/anthropic/drafts.ts. Kept local so this client
 // component does not pull the server-side drafts module into the browser bundle.
@@ -96,35 +97,17 @@ export function TweetCard({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [confirmingFollow, setConfirmingFollow] = useState(false);
 
-  // X's reply composer, pre-filled. Opening this is an ordinary link a
-  // person then clicks Post on — it is not the API reply X restricted.
-  // The text param is best-effort: if X ever stops honouring it, the
-  // clipboard copy below still makes this a paste.
-  function replyIntentUrl(text: string): string {
-    const url = new URL("https://x.com/intent/tweet");
-    url.searchParams.set("in_reply_to", tweet.x_tweet_id);
-    url.searchParams.set("text", text);
-    return url.toString();
-  }
-
   function handleCopyAndPost(draft: DraftRow) {
     if (!draft.draft_text) return;
 
-    // Start the copy, then open the tab WITHOUT awaiting it. Awaiting
-    // first would end the user-gesture context and browsers would block
-    // the new tab as a popup — the copy still lands either way.
-    const copying = navigator.clipboard
-      ?.writeText(draft.draft_text)
-      .catch(() => undefined);
+    // Copies and opens X's composer in one gesture — see lib/x/intent.ts
+    // for why the copy is deliberately not awaited first.
+    copyAndOpenReply(tweet.x_tweet_id, draft.draft_text);
 
-    window.open(replyIntentUrl(draft.draft_text), "_blank", "noopener,noreferrer");
-
-    void Promise.resolve(copying).then(() => {
-      setCopiedId(draft.id);
-      setTimeout(() => {
-        setCopiedId((current) => (current === draft.id ? null : current));
-      }, 1500);
-    });
+    setCopiedId(draft.id);
+    setTimeout(() => {
+      setCopiedId((current) => (current === draft.id ? null : current));
+    }, 1500);
   }
 
   async function handleCopy(draft: DraftRow) {
