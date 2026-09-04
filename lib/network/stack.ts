@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { NetworkTweet } from "@/lib/getx/userTweets";
+import type { NetworkTweet, QuotedPost } from "@/lib/getx/userTweets";
 import type { TweetMetrics } from "@/lib/getx/tweet";
 
 // Network is a rolling window, not an inbox: one poll of
@@ -39,6 +39,7 @@ export type NetworkCard = {
   engagement_score: number | null;
   posted_at: string | null;
   source: string;
+  quoted: QuotedPost | null;
 };
 
 export type NetworkStack = {
@@ -59,6 +60,20 @@ function toMetrics(value: unknown): TweetMetrics {
     like_count: typeof m.like_count === "number" ? m.like_count : 0,
     retweet_count: typeof m.retweet_count === "number" ? m.retweet_count : 0,
     reply_count: typeof m.reply_count === "number" ? m.reply_count : 0,
+  };
+}
+
+// The column is jsonb and its shape came from an undocumented API field,
+// so it is validated on the way out as well as on the way in.
+function toQuoted(value: unknown): QuotedPost | null {
+  if (!value || typeof value !== "object") return null;
+  const q = value as Record<string, unknown>;
+  if (typeof q.handle !== "string" || typeof q.text !== "string") return null;
+  return {
+    handle: q.handle,
+    name: typeof q.name === "string" ? q.name : null,
+    text: q.text,
+    url: typeof q.url === "string" ? q.url : null,
   };
 }
 
@@ -98,7 +113,9 @@ export async function loadStacks(
 
   const { data: tweets, error: tweetsError } = await supabase
     .from("network_tweets")
-    .select("id, profile_id, x_tweet_id, content, url, metrics, engagement_score, posted_at, source")
+    .select(
+      "id, profile_id, x_tweet_id, content, url, metrics, engagement_score, posted_at, source, quoted",
+    )
     .eq("user_id", userId)
     .eq("state", "new");
 
@@ -118,6 +135,7 @@ export async function loadStacks(
         typeof row.engagement_score === "number" ? row.engagement_score : null,
       posted_at: typeof row.posted_at === "string" ? row.posted_at : null,
       source: typeof row.source === "string" ? row.source : "poll",
+      quoted: toQuoted(row.quoted),
     };
     const existing = byProfile.get(profileId);
     if (existing) existing.push(card);
@@ -162,6 +180,7 @@ export async function syncTweets(
       engagement_score: tweet.engagement_score,
       posted_at: tweet.posted_at,
       source: "poll",
+      quoted: tweet.quoted,
     })),
     { onConflict: "user_id,x_tweet_id" },
   );
