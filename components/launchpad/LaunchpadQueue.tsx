@@ -19,11 +19,13 @@ export function LaunchpadQueue({
   initialItems,
   initialUsage,
   xHandle,
+  canAutoReply,
   initialActionUsage,
 }: {
   initialItems: QueueItem[];
   initialUsage: RegenerationUsage;
   xHandle: string | null;
+  canAutoReply: boolean;
   initialActionUsage: AllActionUsage;
 }) {
   const [items, setItems] = useState<QueueItem[]>(initialItems);
@@ -540,6 +542,21 @@ export function LaunchpadQueue({
             <UsageMeter usage={usage} />
             <ActionUsageMeter usage={actionUsage} />
           </div>
+
+          {/* Explained once here rather than on every draft: without it,
+              the missing Post button reads as something broken. */}
+          {xHandle != null && !canAutoReply ? (
+            <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+              <span className="font-medium text-zinc-900 dark:text-zinc-50">
+                Replies are sent by you, not by Launchpad.
+              </span>{" "}
+              Since 23 February 2026 X does not allow apps to reply to other
+              people&apos;s posts. Hit <span className="font-medium">Copy</span>,
+              paste it into the reply box on X, then{" "}
+              <span className="font-medium">Mark posted</span> to keep your
+              queue straight. Likes and follows still happen with one click.
+            </div>
+          ) : null}
           <div className="flex flex-col gap-4">
             {items.map((item) => (
               <div key={item.tweet.id} className="flex flex-col gap-2">
@@ -554,6 +571,7 @@ export function LaunchpadQueue({
                   onDelete={() => void handleDelete(item.tweet.id)}
                   isDeleting={deletingIds.has(item.tweet.id)}
                   xHandle={xHandle}
+                  canAutoReply={canAutoReply}
                   onPost={(draftId) => void handlePost(draftId)}
                   postingIds={postingIds}
                   postErrors={postErrors}

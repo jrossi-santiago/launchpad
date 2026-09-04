@@ -36,6 +36,7 @@ export function TweetCard({
   onDelete,
   isDeleting,
   xHandle,
+  canAutoReply,
   onPost,
   postingIds,
   postErrors,
@@ -68,6 +69,7 @@ export function TweetCard({
   onDelete: () => void;
   isDeleting: boolean;
   xHandle: string | null;
+  canAutoReply: boolean;
   onPost: (draftId: string) => void;
   postingIds: Set<string>;
   postErrors: Record<string, string>;
@@ -274,10 +276,16 @@ export function TweetCard({
                       {(draft.draft_text ?? "").length}/280
                     </span>
                     <div className="flex items-center gap-2">
+      {/* With automated replying unavailable, Copy is the first step of
+                          the flow that actually works, so it leads. */}
                       <button
                         type="button"
                         onClick={() => void handleCopy(draft)}
-                        className="rounded-full border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                        className={
+                          canAutoReply
+                            ? "rounded-full border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                            : "rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-zinc-700 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
+                        }
                       >
                         {copiedId === draft.id ? "Copied" : "Copy"}
                       </button>
@@ -302,7 +310,7 @@ export function TweetCard({
                         </span>
                       ) : (
                         <>
-                          {xHandle != null ? (
+                          {xHandle != null && canAutoReply ? (
                             <button
                               type="button"
                               onClick={() => onPost(draft.id)}
