@@ -100,3 +100,51 @@ per-user cap is 12 accounts.
 Cards are never deleted when you send or skip them — the row stays with its
 state flipped, which is what stops the next poll from putting a post you
 already dealt with back on top of the stack.
+
+## X integration: reads vs. writes
+
+Launchpad talks to X through two providers, split by what the call does:
+
+| | Provider | Why |
+| --- | --- | --- |
+| **Reads** — Radar search, Network stacks, monitor webhooks, audience pulls, tweet fetch | GetXAPI (`lib/getx/`) | No account acts, so nothing is at risk; far cheaper than official reads. |
+| **Writes** — replies, likes, follows (and scheduled posts later) | Official X API v2 (`lib/x/`) | Every write is a visible action by the user's account. Official OAuth is the only way to do that without risking a restriction. |
+
+Routes never pick a provider themselves. They call `postAs`, `likeAs` or
+`followAs` in `lib/x/writer.ts`, which decides per connection row:
+
+- `auth_provider = 'oauth2'` with a stored access token, and the server
+  configured → official API.
+- otherwise a stored cookie pair with `GETX_API_KEY` set → legacy GetXAPI.
+- otherwise → the deterministic mock path, so the app stays runnable with
+  no keys at all.
+
+That means the migration is per user, not per deploy: someone who
+connected with cookies keeps working until they reconnect via
+**Settings → Connect X account**.
+
+### Setting up official X access
+
+1. Create an app in the X developer console with OAuth 2.0 enabled as a
+   **confidential client**.
+2. Register the callback exactly as `<NEXT_PUBLIC_APP_URL>/api/auth/x/callback`.
+3. Request scopes `tweet.read tweet.write users.read like.write
+   follows.write offline.access`. `offline.access` is not optional — it is
+   what makes X issue a refresh token, and without one a connection dies a
+   couple of hours after it is made.
+4. Set `X_CLIENT_ID`, `X_CLIENT_SECRET` and `NEXT_PUBLIC_APP_URL`.
+
+X's API is pay-per-use (no subscription tier): posts are billed per
+create, and a follow costs an extra user lookup because the official
+endpoint takes a numeric id rather than a handle. Posts containing a link
+are billed at a much higher rate than plain ones — worth knowing before
+drafts start including URLs at volume.
+
+### Adding a scheduler later
+
+`postAs(supabase, connection, text, replyToTweetId)` already posts a
+standalone post when `replyToTweetId` is `null`. A scheduler needs a
+queue table and a worker that calls it — no new provider code, and no
+change to how tokens are refreshed. Standalone posting is deliberately
+refused on the legacy cookie path: a steady automated cadence through
+scraped cookies is the most restriction-prone pattern there is.

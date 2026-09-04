@@ -64,7 +64,17 @@ export async function POST(request: Request) {
         x_handle: result.handle,
         auth_token_encrypted: authTokenEncrypted,
         ct0_encrypted: ct0Encrypted,
+        // Explicit, not relying on the column default: this row may already
+        // say "oauth2" from an earlier official connection, and leaving it
+        // would route writes at OAuth columns this save just cleared.
+        auth_provider: "cookie",
+        x_user_id: null,
+        access_token_encrypted: null,
+        refresh_token_encrypted: null,
+        token_expires_at: null,
+        scopes: null,
         connected_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       },
       { onConflict: "user_id" },
     );
@@ -106,7 +116,14 @@ export async function DELETE() {
       x_handle: null,
       auth_token_encrypted: null,
       ct0_encrypted: null,
+      auth_provider: "cookie",
+      x_user_id: null,
+      access_token_encrypted: null,
+      refresh_token_encrypted: null,
+      token_expires_at: null,
+      scopes: null,
       connected_at: null,
+      updated_at: new Date().toISOString(),
     })
     .eq("user_id", user.id);
 

@@ -2,8 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import type { DraftRow } from "@/lib/anthropic/drafts";
 import type { TweetRow } from "@/lib/getx/tweet";
-import { buildMockPostReply, postReply } from "@/lib/getx/postReply";
-import { decryptToken } from "@/lib/security/tokenCrypto";
+import { XConnectionError, postAs, type XConnectionRow } from "@/lib/x/writer";
 import { getActionUsage } from "@/lib/usage/actions";
 
 export async function POST(request: Request) {
@@ -142,25 +141,17 @@ export async function POST(request: Request) {
     if (error) console.error("drafts/post failed to record failed action", error);
   }
 
-  let authToken: string;
-  let ct0: string;
-  try {
-    authToken = decryptToken(connection.auth_token_encrypted);
-    ct0 = decryptToken(connection.ct0_encrypted);
-  } catch (error) {
-    console.error("drafts/post failed to decrypt connection", error);
-    await recordFailedAction();
-    return NextResponse.json(
-      { error: "Your X connection needs to be reconnected in Settings." },
-      { status: 400 },
-    );
-  }
-
   try {
     const replyText = draftRow.draft_text ?? "";
-    const result = process.env.GETX_API_KEY
-      ? await postReply(authToken, ct0, tweetRow.x_tweet_id, replyText)
-      : buildMockPostReply(tweetRow.x_tweet_id);
+    // Whether this goes out through the official X API or the legacy
+    // cookie path is decided by the connection row itself — see
+    // resolveWriteProvider() in lib/x/writer.ts.
+    const result = await postAs(
+      supabase,
+      connection as XConnectionRow,
+      replyText,
+      tweetRow.x_tweet_id,
+    );
 
     const nowIso = new Date().toISOString();
 
@@ -212,7 +203,7 @@ export async function POST(request: Request) {
             ? error.message
             : "Failed to post that reply. Please try again.",
       },
-      { status: 502 },
+      { status: error instanceof XConnectionError ? 400 : 502 },
     );
   }
 }

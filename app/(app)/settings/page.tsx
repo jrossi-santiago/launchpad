@@ -2,8 +2,25 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { LogoutButton } from "@/components/LogoutButton";
 import { XConnectionForm } from "@/components/settings/XConnectionForm";
+import { xOAuthConfigured } from "@/lib/x/client";
 
-export default async function SettingsPage() {
+// The X OAuth callback redirects back here with its outcome in the query
+// string. Reading it on the server keeps the form free of useSearchParams
+// (and the Suspense boundary that would need).
+function readParam(
+  params: { [key: string]: string | string[] | undefined },
+  key: string,
+): string | null {
+  const value = params[key];
+  if (typeof value === "string" && value) return value;
+  return null;
+}
+
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -24,9 +41,11 @@ export default async function SettingsPage() {
 
   const { data: xConnection } = await supabase
     .from("x_connections")
-    .select("x_handle")
+    .select("x_handle, auth_provider")
     .eq("user_id", user.id)
     .maybeSingle();
+
+  const params = await searchParams;
 
   return (
     <div className="max-w-xl">
@@ -53,7 +72,16 @@ export default async function SettingsPage() {
         </div>
       </div>
 
-      <XConnectionForm initialHandle={xConnection?.x_handle ?? null} />
+      <XConnectionForm
+        initial={{
+          handle: xConnection?.x_handle ?? null,
+          provider: xConnection?.auth_provider === "oauth2" ? "oauth2" : "cookie",
+        }}
+        oauthConfigured={xOAuthConfigured()}
+        legacyAvailable={Boolean(process.env.GETX_API_KEY)}
+        callbackHandle={readParam(params, "x_connected")}
+        callbackError={readParam(params, "x_error")}
+      />
 
       <LogoutButton className="mt-6 inline-flex items-center justify-center rounded-full border border-zinc-300 px-6 py-2.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800" />
     </div>

@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import type { TweetRow } from "@/lib/getx/tweet";
-import { buildMockFollow, followUser } from "@/lib/getx/actions";
-import { decryptToken } from "@/lib/security/tokenCrypto";
+import { XConnectionError, followAs, type XConnectionRow } from "@/lib/x/writer";
 import { getActionUsage } from "@/lib/usage/actions";
 
 export async function POST(request: Request) {
@@ -124,29 +123,16 @@ export async function POST(request: Request) {
     if (error) console.error("tweets/follow failed to record failed action", error);
   }
 
-  let authToken: string;
-  try {
-    authToken = decryptToken(connection.auth_token_encrypted);
-    decryptToken(connection.ct0_encrypted);
-  } catch (error) {
-    console.error("tweets/follow failed to decrypt connection", error);
-    await recordFailedAction();
-    return NextResponse.json(
-      { error: "Your X connection needs to be reconnected in Settings." },
-      { status: 400 },
-    );
-  }
-
-  // GetXAPI's follow endpoint wants a bare screen name; author_handle is
-  // stored with a leading "@" (see lib/getx/tweet.ts).
+  // Both write providers want a bare screen name; author_handle is stored
+  // with a leading "@" (see lib/getx/tweet.ts).
   const username = tweetRow.author_handle.replace(/^@/, "");
 
   try {
-    const result = process.env.GETX_API_KEY
-      ? await followUser(authToken, username)
-      : buildMockFollow(username);
-    if (!result.following) {
-      throw new Error("GetXAPI did not confirm the follow.");
+    const result = await followAs(supabase, connection as XConnectionRow, username);
+    // A protected account answers with pending:true and following:false —
+    // the follow request was sent, so that is a success, not a failure.
+    if (!result.following && !result.pending) {
+      throw new Error("X did not confirm the follow.");
     }
 
     const { error: actionError } = await supabase.from("actions").insert({
@@ -170,6 +156,9 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       following: true,
+      // Surfaced so the UI can say "request sent" for a protected account
+      // rather than claiming an established follow.
+      pending: result.pending,
       authorHandle: tweetRow.author_handle,
       usage: updatedUsage,
     });
@@ -186,7 +175,7 @@ export async function POST(request: Request) {
             ? error.message
             : "Failed to follow that author. Please try again.",
       },
-      { status: 502 },
+      { status: error instanceof XConnectionError ? 400 : 502 },
     );
   }
 }
