@@ -121,10 +121,25 @@ export function extractXErrorMessage(body: unknown, status: number): string {
   return `X API request failed with status ${status}.`;
 }
 
+// Since 23 Feb 2026 X refuses programmatic replies on every self-serve
+// plan (Free, Basic, Pro and Pay-Per-Use): an app may only reply to a post
+// whose author @mentioned or quoted it. Enterprise and Public Utility apps
+// are exempt. It surfaces as a 403 whose message is about being mentioned
+// or being the author, and it is not something different wording fixes —
+// so it must not be reported as a duplicate-content rejection.
+function isProgrammaticReplyRestriction(apiMessage: string): boolean {
+  const message = apiMessage.toLowerCase();
+  return (
+    message.includes("only reply to or quote") ||
+    (message.includes("mentioned") && message.includes("author"))
+  );
+}
+
 // Turns the handful of statuses a user can actually do something about
 // into plain language, and leaves everything else to the API's own
-// message. 403 on a create is nearly always X's duplicate-content rule,
-// which reads as an unexplained failure otherwise.
+// message. The 403s are worth separating: they have unrelated causes and
+// unrelated fixes, and reporting the wrong one sends someone off editing
+// text that was never the problem.
 export function describeXWriteFailure(
   status: number,
   apiMessage: string,
@@ -135,7 +150,15 @@ export function describeXWriteFailure(
   }
 
   if (status === 403) {
-    return `X rejected this post: ${apiMessage} (X blocks duplicate posts — try different wording.)`;
+    if (isProgrammaticReplyRestriction(apiMessage)) {
+      return "X no longer allows apps to reply to other people's posts (a policy change on 23 Feb 2026 that applies to every self-serve plan). Use Copy, paste the reply into X yourself, then Mark posted. Nothing is wrong with this draft.";
+    }
+
+    if (apiMessage.toLowerCase().includes("duplicate")) {
+      return `X rejected this post as a duplicate: ${apiMessage} Try different wording.`;
+    }
+
+    return `X rejected this post: ${apiMessage}`;
   }
 
   if (status === 429) {
