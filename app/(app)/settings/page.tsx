@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { LogoutButton } from "@/components/LogoutButton";
+import { XConnectionForm } from "@/components/settings/XConnectionForm";
 
 export default async function SettingsPage() {
   const supabase = await createClient();
@@ -20,6 +21,12 @@ export default async function SettingsPage() {
 
   const email = profile?.email ?? user.email ?? "";
   const plan = profile?.plan ?? "free";
+
+  const { data: xConnection } = await supabase
+    .from("x_connections")
+    .select("x_handle")
+    .eq("user_id", user.id)
+    .maybeSingle();
 
   return (
     <div className="max-w-xl">
@@ -45,6 +52,8 @@ export default async function SettingsPage() {
           </span>
         </div>
       </div>
+
+      <XConnectionForm initialHandle={xConnection?.x_handle ?? null} />
 
       <LogoutButton className="mt-6 inline-flex items-center justify-center rounded-full border border-zinc-300 px-6 py-2.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800" />
     </div>
