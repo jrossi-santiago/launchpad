@@ -80,26 +80,38 @@ drafts a Radar result does).
 Replies and retweets are filtered out: a stack only ever holds a person's own
 original posts.
 
-Two things fill a stack, because GetXAPI monitoring is forward-only from a
-baseline taken when the monitor is created and has no backfill:
+It is **poll-only, by design**. `GET /twitter/user/tweets` runs when the
+Network page loads and when you press Refresh, and keeps the newest
+`STACK_WINDOW` (10) original posts per account. There is no background
+timer and no webhook: a stack changes when someone is looking at it, and at
+no other time. Nothing but `GETX_API_KEY` is needed (without it you get
+mock posts, so the page is usable end to end with no keys at all).
 
-- **Polling** `GET /twitter/user/tweets` runs when the Network page loads and
-  when you press Refresh. There is no background timer. This is the path that
-  gives a newly watched account a stack at all, and it works with nothing but
-  `GETX_API_KEY` set (and returns mock posts without it).
-- **Monitoring** `POST /twitter/monitor/add` pushes new posts to
-  `/api/network/webhook` as they happen. It needs `NEXT_PUBLIC_APP_URL` set to
-  a public HTTPS origin — GetXAPI rejects localhost and private addresses — and
-  monitoring enabled on the GetXAPI plan. Without either, a profile falls back
-  to poll-only and says so under its stack.
+GetXAPI's monitoring product would push new posts in real time, but it rents
+a plan slot per watched account and its webhook contract — signature header,
+signing scheme, delivery payload — is undocumented. Polling costs one request
+per account per poll and nothing else, which is why the account cap is 25
+(`MAX_PROFILES`) rather than however many monitor slots the plan carries.
 
-Removing an account calls `POST /twitter/monitor/remove` rather than pausing,
-because removal is the only thing that frees the monitoring plan slot. The
-per-user cap is 12 accounts.
+Three things keep that cost honest:
+
+- **A poll TTL.** An account polled in the last 3 minutes (`POLL_TTL_MS`) is
+  skipped on page load, so re-opening the tab is free. Refresh sends
+  `force: true` and polls everything.
+- **Bounded concurrency.** Accounts are polled 4 at a time, not serially and
+  not all at once.
+- **One extra page, at most.** A page of a reply-heavy account can hold only
+  a few originals, so when a page comes back under the window and reports
+  `has_more`, exactly one more page is fetched.
 
 Cards are never deleted when you send or skip them — the row stays with its
 state flipped, which is what stops the next poll from putting a post you
-already dealt with back on top of the stack.
+already dealt with back on top of the stack. Ingest is an upsert on
+`(user_id, x_tweet_id)` that deliberately leaves `state` alone, so a re-poll
+refreshes a card's like/retweet counts without resurrecting a decided one.
+
+The one thing poll-only gives up: if an account posts more than 10 original
+posts between two visits, the oldest of them never reach your stack.
 
 ## X integration: reads vs. writes
 
@@ -107,7 +119,7 @@ Launchpad talks to X through two providers, split by what the call does:
 
 | | Provider | Why |
 | --- | --- | --- |
-| **Reads** — Radar search, Network stacks, monitor webhooks, audience pulls, tweet fetch | GetXAPI (`lib/getx/`) | No account acts, so nothing is at risk; far cheaper than official reads. |
+| **Reads** — Radar search, Network stacks, audience pulls, tweet fetch | GetXAPI (`lib/getx/`) | No account acts, so nothing is at risk; far cheaper than official reads. |
 | **Writes** — replies, likes, follows (and scheduled posts later) | Official X API v2 (`lib/x/`) | Every write is a visible action by the user's account. Official OAuth is the only way to do that without risking a restriction. |
 
 Routes never pick a provider themselves. They call `postAs`, `likeAs` or

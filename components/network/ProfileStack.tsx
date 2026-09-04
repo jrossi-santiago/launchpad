@@ -57,7 +57,7 @@ export function ProfileStack({
   const { profile, cards } = stack;
   const active = cards[activeIndex];
   const rest = cards.filter((_, index) => index !== activeIndex);
-  const live = profile.monitor_status === "active";
+  const polledAge = formatAge(profile.last_polled_at);
 
   return (
     <section
@@ -86,9 +86,12 @@ export function ProfileStack({
           </p>
           <p className="flex items-center gap-1.5 truncate text-xs text-zinc-500 dark:text-zinc-400">
             <span
-              title={live ? "Live: new posts arrive on their own" : profile.monitor_error ?? "Poll-only"}
+              title={
+                profile.last_error ??
+                (polledAge ? `Checked ${polledAge} ago` : "Not checked yet")
+              }
               className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${
-                live ? "bg-emerald-500" : "bg-zinc-400 dark:bg-zinc-600"
+                profile.last_error ? "bg-amber-500" : "bg-zinc-400 dark:bg-zinc-600"
               }`}
             />
             @{profile.handle}
@@ -110,9 +113,7 @@ export function ProfileStack({
 
       {cards.length === 0 ? (
         <div className="rounded-xl border border-dashed border-zinc-300 px-4 py-10 text-center text-xs text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
-          {live
-            ? "All caught up. New posts will land here on their own."
-            : "All caught up. Refresh to check for new posts."}
+          All caught up. Refresh to check for new posts.
         </div>
       ) : (
         <>
@@ -142,11 +143,9 @@ export function ProfileStack({
         </>
       )}
 
-      {profile.monitor_error ? (
-        <p className="px-1 text-[11px] text-zinc-400 dark:text-zinc-500">
-          {profile.monitor_error}
-        </p>
-      ) : null}
+      <p className="px-1 text-[11px] text-zinc-400 dark:text-zinc-500">
+        {profile.last_error ?? (polledAge ? `Checked ${polledAge} ago` : "")}
+      </p>
     </section>
   );
 }
