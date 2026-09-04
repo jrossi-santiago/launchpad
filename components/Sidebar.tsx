@@ -6,6 +6,8 @@ import { LogoutButton } from "@/components/LogoutButton";
 
 const primaryNav = [
   { href: "/home", label: "Home" },
+  { href: "/feed", label: "Feed" },
+  { href: "/explore", label: "Explore" },
   { href: "/radar", label: "Radar" },
   { href: "/network", label: "Network" },
   { href: "/launchpad", label: "Launchpad" },
@@ -22,7 +24,7 @@ export function Sidebar({
   const pathname = usePathname();
 
   return (
-    <aside className="flex h-full w-64 shrink-0 flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+    <aside className="hidden h-full w-64 shrink-0 flex-col md:flex border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
       <div className="px-5 py-6">
         <span className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
           Launchpad

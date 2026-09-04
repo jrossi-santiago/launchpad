@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { Sidebar } from "@/components/Sidebar";
+import { TabBar } from "@/components/TabBar";
 
 export default async function AppLayout({
   children,
@@ -28,9 +29,12 @@ export default async function AppLayout({
   return (
     <div className="flex flex-1">
       <Sidebar email={email} plan={plan} />
-      <main className="flex flex-1 flex-col overflow-y-auto p-8">
+      {/* The bottom padding is what keeps the last card clear of the
+          mobile tab bar, which is fixed and floats over the page. */}
+      <main className="flex flex-1 flex-col overflow-y-auto p-4 pb-28 md:p-8 md:pb-8">
         {children}
       </main>
+      <TabBar />
     </div>
   );
 }
