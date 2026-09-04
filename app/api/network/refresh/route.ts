@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { buildMockUserTweets, fetchUserTweets } from "@/lib/getx/userTweets";
-import { ingestTweets, loadStacks, STACK_LIMIT, type NetworkProfileRow } from "@/lib/network/stack";
+import { pollProfiles } from "@/lib/network/poll";
+import { loadStacks, type NetworkProfileRow } from "@/lib/network/stack";
 
-// Re-polls every watched account and returns the rebuilt stacks. Called
-// once when the Network page loads and again when the user clicks Refresh
-// — there is no background timer, so a stack only ever changes when
-// someone is looking at it (or when a monitor pushes a post).
-export async function POST() {
+// Re-polls watched accounts and returns the rebuilt stacks. This is the
+// only thing that fills a stack: Network is poll-only, so a stack changes
+// when someone is looking at it and at no other time.
+//
+// Called on page load without `force`, which leaves accounts polled inside
+// the TTL alone, and by the Refresh button with `force: true`, which polls
+// every one of them.
+export async function POST(request: Request) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -16,6 +19,10 @@ export async function POST() {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  const body = await request.json().catch(() => null);
+  const force =
+    body && typeof body === "object" && (body as { force?: unknown }).force === true;
 
   const { data: profiles, error: profilesError } = await supabase
     .from("network_profiles")
@@ -27,39 +34,7 @@ export async function POST() {
     return NextResponse.json({ error: "Failed to refresh Network." }, { status: 500 });
   }
 
-  const rows = (profiles ?? []) as NetworkProfileRow[];
-
-  // Sequential on purpose: GetXAPI rate-limits per account, and a dozen
-  // profiles is a fraction of a second each.
-  for (const profile of rows) {
-    try {
-      const page = process.env.GETX_API_KEY
-        ? await fetchUserTweets(profile.handle)
-        : buildMockUserTweets(profile.handle);
-
-      await ingestTweets(
-        supabase,
-        user.id,
-        profile.id,
-        page.tweets.slice(0, STACK_LIMIT),
-        "poll",
-      );
-
-      await supabase
-        .from("network_profiles")
-        .update({
-          display_name: page.profile?.displayName ?? profile.display_name,
-          avatar_url: page.profile?.avatarUrl ?? profile.avatar_url,
-          bio: page.profile?.bio ?? profile.bio,
-          followers_count: page.profile?.followersCount ?? profile.followers_count,
-          last_polled_at: new Date().toISOString(),
-        })
-        .eq("id", profile.id);
-    } catch (error) {
-      // One unreachable account must not blank the whole board.
-      console.error(`network/refresh failed for @${profile.handle}`, error);
-    }
-  }
+  await pollProfiles(supabase, user.id, (profiles ?? []) as NetworkProfileRow[], { force });
 
   const stacks = await loadStacks(supabase, user.id);
   return NextResponse.json({ stacks });

@@ -22,14 +22,21 @@ export function NetworkBoard({
   const [sendStates, setSendStates] = useState<Record<string, SendState>>({});
 
   // Refresh runs when the page loads and when the button is clicked —
-  // there is no polling timer, by design. Written as a promise chain to
-  // match the pattern in RadarSearch (the setState-in-effect lint rule
-  // traces through async functions but not .then() chains).
+  // there is no polling timer, by design. The page-load call leaves force
+  // unset, so accounts polled in the last few minutes are skipped server
+  // side and re-opening the tab costs nothing; the button forces every
+  // account. Written as a promise chain to match the pattern in
+  // RadarSearch (the setState-in-effect lint rule traces through async
+  // functions but not .then() chains).
   // No synchronous setState in here: the caller sets the spinner before
   // calling, which keeps the mount-time call clear of the
   // set-state-in-effect rule (same shape as RadarSearch's performSearch).
-  const refresh = useCallback(() => {
-    fetch("/api/network/refresh", { method: "POST" })
+  const refresh = useCallback((force = false) => {
+    fetch("/api/network/refresh", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ force }),
+    })
       .then(async (response) => {
         const body = await response.json().catch(() => null);
         if (!response.ok) {
@@ -99,7 +106,7 @@ export function NetworkBoard({
   }
 
   async function handleRemove(profileId: string, handle: string) {
-    if (!window.confirm(`Stop watching @${handle}? This frees the monitoring slot.`)) {
+    if (!window.confirm(`Stop watching @${handle}?`)) {
       return;
     }
 
@@ -219,8 +226,9 @@ export function NetworkBoard({
       <div className="rounded-xl border border-zinc-200 bg-white p-8 dark:border-zinc-800 dark:bg-zinc-900">
         <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">Network</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Watch the accounts that matter to you. Their latest original posts —
-          no replies, no retweets — stack up here, ready to send to Launchpad.
+          Watch the accounts that matter to you. Their latest original posts
+          — no replies, no retweets — load when you open this page, ready to
+          send to Launchpad.
         </p>
 
         <div className="mt-6 flex flex-wrap items-center gap-3">
@@ -245,7 +253,7 @@ export function NetworkBoard({
             type="button"
             onClick={() => {
               setRefreshing(true);
-              refresh();
+              refresh(true);
             }}
             disabled={refreshing || stacks.length === 0}
             className="shrink-0 rounded-full border border-zinc-300 px-5 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
@@ -270,8 +278,9 @@ export function NetworkBoard({
             Nobody in your Network yet.
           </p>
           <p className="max-w-sm text-sm text-zinc-500 dark:text-zinc-400">
-            Add the handle of someone worth replying to. Their last few posts
-            load straight away, and new ones stack up as they post.
+            Add the handle of someone worth replying to. Their latest posts
+            load straight away, and the stack refills each time you come
+            back.
           </p>
         </div>
       ) : (

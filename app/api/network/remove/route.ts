@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { detachMonitor } from "@/lib/network/monitoring";
-import { loadStacks, type NetworkProfileRow } from "@/lib/network/stack";
+import { loadStacks } from "@/lib/network/stack";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -25,7 +24,7 @@ export async function POST(request: Request) {
 
   const { data: profile, error: lookupError } = await supabase
     .from("network_profiles")
-    .select("*")
+    .select("id")
     .eq("user_id", user.id)
     .eq("id", profileId)
     .maybeSingle();
@@ -38,10 +37,6 @@ export async function POST(request: Request) {
   if (!profile) {
     return NextResponse.json({ error: "That account isn't in your Network." }, { status: 404 });
   }
-
-  // Remove, never pause: removal is the only thing that frees the
-  // monitoring plan slot this account occupies.
-  await detachMonitor((profile as NetworkProfileRow).monitor_id);
 
   const { error: deleteError } = await supabase
     .from("network_profiles")

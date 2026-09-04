@@ -64,11 +64,6 @@ export function NetworkCard({
         <span>{card.metrics.like_count} likes</span>
         <span>{card.metrics.retweet_count} retweets</span>
         <span>{card.metrics.reply_count} replies</span>
-        {card.source === "monitor" ? (
-          <span className="ml-auto rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400">
-            live
-          </span>
-        ) : null}
       </div>
 
       <div className="flex items-center gap-2">

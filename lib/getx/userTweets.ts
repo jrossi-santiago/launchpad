@@ -19,6 +19,11 @@ export type NetworkProfileInfo = {
 export type UserTweetsPage = {
   profile: NetworkProfileInfo | null;
   tweets: NetworkTweet[];
+  // Paging exists for one reason: a page of a reply-heavy account can hold
+  // only a handful of original posts, and a stack of three cards from
+  // someone who posts daily is a bug, not a quiet week.
+  nextCursor: string | null;
+  hasMore: boolean;
 };
 
 // Accepts "@handle", "handle", or any x.com/twitter.com profile URL, and
@@ -151,12 +156,26 @@ export function mapUserTweetsResponse(response: unknown): UserTweetsPage {
     if (mapped) tweets.push(mapped);
   }
 
-  return { profile, tweets };
+  const nextCursor =
+    typeof envelope.next_cursor === "string" && envelope.next_cursor
+      ? envelope.next_cursor
+      : null;
+
+  return {
+    profile,
+    tweets,
+    nextCursor,
+    hasMore: envelope.has_more === true && nextCursor !== null,
+  };
 }
 
-export async function fetchUserTweets(handle: string): Promise<UserTweetsPage> {
+export async function fetchUserTweets(
+  handle: string,
+  cursor: string | null = null,
+): Promise<UserTweetsPage> {
+  const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
   const response = await fetch(
-    `${getBaseUrl()}/twitter/user/tweets?userName=${encodeURIComponent(handle)}`,
+    `${getBaseUrl()}/twitter/user/tweets?userName=${encodeURIComponent(handle)}${cursorParam}`,
     { headers: authHeaders() },
   );
 
@@ -174,7 +193,7 @@ export async function fetchUserTweets(handle: string): Promise<UserTweetsPage> {
 export function buildMockUserTweets(handle: string): UserTweetsPage {
   const now = Date.now();
 
-  const tweets: NetworkTweet[] = Array.from({ length: 8 }, (_, i) => {
+  const tweets: NetworkTweet[] = Array.from({ length: 10 }, (_, i) => {
     const id = `900000000000000${String(1000 + i).slice(1)}`;
     const likeCount = 240 - i * 23;
     const metrics: TweetMetrics = {
@@ -204,5 +223,7 @@ export function buildMockUserTweets(handle: string): UserTweetsPage {
       followersCount: 4200,
     },
     tweets,
+    nextCursor: null,
+    hasMore: false,
   };
 }

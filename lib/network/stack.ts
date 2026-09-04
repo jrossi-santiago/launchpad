@@ -2,13 +2,20 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { NetworkTweet } from "@/lib/getx/userTweets";
 import type { TweetMetrics } from "@/lib/getx/tweet";
 
-// How many cards a stack shows. The face-up card plus the fanned ones
-// underneath it — more than this and the fan stops being readable.
-export const STACK_LIMIT = 8;
+// Network is a rolling window, not an inbox: one poll of
+// GET /twitter/user/tweets keeps the newest posts per account, and a stack
+// shows that window minus whatever you have already sent or skipped.
+export const STACK_WINDOW = 10;
 
-// Every watched account holds a GetXAPI monitoring plan slot, so the cap
-// is deliberate rather than cosmetic.
-export const MAX_PROFILES = 12;
+// Nothing scarce is consumed per account any more — the old cap was one
+// GetXAPI monitor slot each — so the limit is a call budget: one request
+// per account per poll, and this is how many a Refresh can cost.
+export const MAX_PROFILES = 25;
+
+// A page load re-polls, so bouncing in and out of Network would otherwise
+// spend the whole budget for nothing. An account polled inside this window
+// is left alone; the Refresh button sends force and ignores it.
+export const POLL_TTL_MS = 3 * 60 * 1000;
 
 export type NetworkProfileRow = {
   id: string;
@@ -18,9 +25,7 @@ export type NetworkProfileRow = {
   avatar_url: string | null;
   bio: string | null;
   followers_count: number | null;
-  monitor_id: string | null;
-  monitor_status: "none" | "active" | "paused";
-  monitor_error: string | null;
+  last_error: string | null;
   last_polled_at: string | null;
   created_at: string;
 };
@@ -65,9 +70,18 @@ function byNewest(a: NetworkCard, b: NetworkCard): number {
   return right - left;
 }
 
+// True when this account was polled recently enough that polling it again
+// would buy nothing. `force` (the Refresh button) skips the check.
+export function isFresh(profile: NetworkProfileRow, now = Date.now()): boolean {
+  if (!profile.last_polled_at) return false;
+  const polled = Date.parse(profile.last_polled_at);
+  if (Number.isNaN(polled)) return false;
+  return now - polled < POLL_TTL_MS;
+}
+
 // One query for profiles and one for their undecided cards, grouped in
-// memory — cheap at a dozen profiles, and it keeps the per-stack limit in
-// one place instead of issuing a query per stack.
+// memory — cheap at a couple of dozen profiles, and it keeps the per-stack
+// window in one place instead of issuing a query per stack.
 export async function loadStacks(
   supabase: SupabaseClient,
   userId: string,
@@ -112,40 +126,33 @@ export async function loadStacks(
 
   return profileRows.map((profile) => ({
     profile,
-    cards: (byProfile.get(profile.id) ?? []).sort(byNewest).slice(0, STACK_LIMIT),
+    cards: (byProfile.get(profile.id) ?? []).sort(byNewest).slice(0, STACK_WINDOW),
   }));
 }
 
-// Inserts only posts this user has never seen before. The dedupe read is
-// on (user_id, x_tweet_id) across every state, so a post the user already
-// sent or skipped is never re-added by a later poll or a monitor delivery
-// that overlaps it.
-export async function ingestTweets(
+// Writes one poll's window back.
+//
+// This is an upsert on (user_id, x_tweet_id) rather than an insert of
+// what's new, which does two jobs at once: a post we have never seen is
+// added, and a post we already hold has its metrics brought up to date —
+// without which a card ingested at two likes would still read two likes
+// hours later.
+//
+// `state` and `tweet_id` are deliberately absent from the payload, so
+// on-conflict never touches them: a card the user already sent or skipped
+// keeps that decision and stays off the stack, which is exactly what stops
+// the next poll from resurrecting it.
+export async function syncTweets(
   supabase: SupabaseClient,
   userId: string,
   profileId: string,
   tweets: NetworkTweet[],
-  source: "poll" | "monitor",
 ): Promise<number> {
-  if (tweets.length === 0) return 0;
+  const window = tweets.slice(0, STACK_WINDOW);
+  if (window.length === 0) return 0;
 
-  const ids = tweets.map((tweet) => tweet.x_tweet_id);
-  const { data: existing, error: existingError } = await supabase
-    .from("network_tweets")
-    .select("x_tweet_id")
-    .eq("user_id", userId)
-    .in("x_tweet_id", ids);
-
-  if (existingError) throw existingError;
-
-  const seen = new Set(
-    (existing ?? []).map((row) => String((row as { x_tweet_id: string }).x_tweet_id)),
-  );
-  const fresh = tweets.filter((tweet) => !seen.has(tweet.x_tweet_id));
-  if (fresh.length === 0) return 0;
-
-  const { error: insertError } = await supabase.from("network_tweets").insert(
-    fresh.map((tweet) => ({
+  const { error } = await supabase.from("network_tweets").upsert(
+    window.map((tweet) => ({
       user_id: userId,
       profile_id: profileId,
       x_tweet_id: tweet.x_tweet_id,
@@ -154,10 +161,11 @@ export async function ingestTweets(
       metrics: tweet.metrics,
       engagement_score: tweet.engagement_score,
       posted_at: tweet.posted_at,
-      source,
+      source: "poll",
     })),
+    { onConflict: "user_id,x_tweet_id" },
   );
 
-  if (insertError) throw insertError;
-  return fresh.length;
+  if (error) throw error;
+  return window.length;
 }

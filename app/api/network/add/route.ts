@@ -1,14 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { buildMockUserTweets, fetchUserTweets, parseHandle } from "@/lib/getx/userTweets";
-import { attachMonitor } from "@/lib/network/monitoring";
-import {
-  ingestTweets,
-  loadStacks,
-  MAX_PROFILES,
-  STACK_LIMIT,
-  type NetworkProfileRow,
-} from "@/lib/network/stack";
+import { parseHandle } from "@/lib/getx/userTweets";
+import { pollProfile } from "@/lib/network/poll";
+import { loadStacks, MAX_PROFILES, type NetworkProfileRow } from "@/lib/network/stack";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -74,44 +68,12 @@ export async function POST(request: Request) {
 
   const profile = inserted as NetworkProfileRow;
 
-  // Backfill first: GetXAPI monitoring is forward-only from the moment a
-  // monitor is created, so without this the stack would start empty.
-  try {
-    const page = process.env.GETX_API_KEY
-      ? await fetchUserTweets(handle)
-      : buildMockUserTweets(handle);
-
-    await ingestTweets(supabase, user.id, profile.id, page.tweets.slice(0, STACK_LIMIT), "poll");
-
-    const attachment = await attachMonitor(user.id, handle);
-
-    await supabase
-      .from("network_profiles")
-      .update({
-        display_name: page.profile?.displayName ?? null,
-        avatar_url: page.profile?.avatarUrl ?? null,
-        bio: page.profile?.bio ?? null,
-        followers_count: page.profile?.followersCount ?? null,
-        last_polled_at: new Date().toISOString(),
-        monitor_id: attachment.monitorId,
-        monitor_status: attachment.status,
-        monitor_error: attachment.error,
-      })
-      .eq("id", profile.id);
-  } catch (error) {
-    // The profile row stays: a failed first poll is recoverable with the
-    // Refresh button, and deleting it here would lose the monitor state.
-    console.error("network/add backfill failed", error);
-    await supabase
-      .from("network_profiles")
-      .update({
-        monitor_error:
-          error instanceof Error
-            ? `Couldn't load posts: ${error.message}`
-            : "Couldn't load this account's posts.",
-      })
-      .eq("id", profile.id);
-  }
+  // Forced: the row was created a moment ago, so its TTL check would
+  // otherwise be meaningless — and an account added without its first
+  // poll is an empty column with no explanation. A failure here is
+  // recorded on the profile as last_error rather than thrown: the row
+  // stays, and Refresh retries it.
+  await pollProfile(supabase, user.id, profile, { force: true });
 
   const stacks = await loadStacks(supabase, user.id);
   return NextResponse.json({ stacks });
