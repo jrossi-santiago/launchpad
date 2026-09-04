@@ -9,11 +9,13 @@ function PeekCard({
   text,
   age,
   offset,
+  isQuote,
   onClick,
 }: {
   text: string;
   age: string;
   offset: number;
+  isQuote: boolean;
   onClick: () => void;
 }) {
   return (
@@ -25,6 +27,9 @@ function PeekCard({
     >
       <span className="flex items-baseline gap-2">
         <span className="line-clamp-1 flex-1 text-xs text-zinc-500 dark:text-zinc-400">
+          {/* Flags a quote tweet down in the fan, where there is no room
+              for the block the face-up card shows. */}
+          {isQuote ? <span aria-label="Quote tweet">↱ </span> : null}
           {text}
         </span>
         <span className="shrink-0 text-[11px] text-zinc-400 dark:text-zinc-500">{age}</span>
@@ -136,6 +141,7 @@ export function ProfileStack({
                 text={card.content ?? ""}
                 age={formatAge(card.posted_at)}
                 offset={-6}
+                isQuote={card.quoted !== null}
                 onClick={() => onSelectCard(cards.indexOf(card))}
               />
             ))}

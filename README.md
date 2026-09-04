@@ -78,7 +78,12 @@ ones into the Launchpad queue (where they get the same three Haiku reply
 drafts a Radar result does).
 
 Replies and retweets are filtered out: a stack only ever holds a person's own
-original posts.
+original posts. Quote tweets stay, because a quote *is* the person's own post
+— and usually the better reply opportunity, since they have already staked
+out a position. The card shows the quoted post underneath the commentary, so
+"this is exactly right" is not the whole card. GetXAPI does not document the
+`quoted_tweet` shape, so it is mapped defensively: a quote it cannot read
+costs the card its context block and nothing else.
 
 It is **poll-only, by design**. `GET /twitter/user/tweets` runs when the
 Network page loads and when you press Refresh, and keeps the newest

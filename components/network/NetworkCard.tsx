@@ -56,9 +56,42 @@ export function NetworkCard({
         </span>
       </div>
 
-      <p className="min-h-24 text-sm leading-relaxed whitespace-pre-wrap text-zinc-700 dark:text-zinc-300">
-        {card.content ?? ""}
-      </p>
+      <div className="flex min-h-24 flex-col gap-3">
+        <p className="text-sm leading-relaxed whitespace-pre-wrap text-zinc-700 dark:text-zinc-300">
+          {card.content ?? ""}
+        </p>
+
+        {/* A quote tweet's own text is usually a few words of reaction, so
+            without the post being quoted the card reads as a non-sequitur —
+            and a quote is often the better reply opportunity, because the
+            person has already staked out a position. */}
+        {card.quoted ? (
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950/50">
+            <p className="flex items-baseline gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+              <span aria-hidden>↱</span>
+              {card.quoted.name ? (
+                <span className="truncate font-medium text-zinc-600 dark:text-zinc-300">
+                  {card.quoted.name}
+                </span>
+              ) : null}
+              <span className="truncate">@{card.quoted.handle}</span>
+              {card.quoted.url ? (
+                <a
+                  href={card.quoted.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="ml-auto shrink-0 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+                >
+                  ↗
+                </a>
+              ) : null}
+            </p>
+            <p className="mt-1 line-clamp-4 text-xs leading-relaxed whitespace-pre-wrap text-zinc-600 dark:text-zinc-400">
+              {card.quoted.text}
+            </p>
+          </div>
+        ) : null}
+      </div>
 
       <div className="flex items-center gap-3 border-t border-zinc-200 pt-3 text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
         <span>{card.metrics.like_count} likes</span>

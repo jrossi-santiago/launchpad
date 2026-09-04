@@ -6,6 +6,17 @@ import type { FetchedTweet, TweetMetrics } from "@/lib/getx/tweet";
 // plus when it was posted, which is what orders a stack.
 export type NetworkTweet = FetchedTweet & {
   posted_at: string | null; // ISO-8601, null when GetXAPI's date is unparseable
+  quoted: QuotedPost | null; // the post this one quotes, when it quotes one
+};
+
+// Just enough of a quoted post to show what is being reacted to. Not a
+// NetworkTweet: a quote's quote is not something a card needs, and metrics
+// on a post we are not triaging would only add noise.
+export type QuotedPost = {
+  handle: string;
+  name: string | null;
+  text: string;
+  url: string | null;
 };
 
 export type NetworkProfileInfo = {
@@ -107,6 +118,44 @@ export function mapRawTweet(raw: unknown): NetworkTweet | null {
     metrics,
     engagement_score: metrics.like_count + metrics.retweet_count + metrics.reply_count,
     posted_at: parseCreatedAt(item.createdAt),
+    quoted: mapQuotedTweet(item.quoted_tweet),
+  };
+}
+
+// UNDOCUMENTED SHAPE — GetXAPI's spec shows `quoted_tweet` on a tweet but
+// only ever as null, so its fields are read defensively: the nested object
+// is assumed to look like a tweet (author.userName, text, url), with the
+// handle also accepted at the top level in case it is flattened. Anything
+// we cannot read a handle and text out of becomes null, which costs the
+// card its context block and nothing else — the post itself still stacks.
+export function mapQuotedTweet(raw: unknown): QuotedPost | null {
+  if (!raw || typeof raw !== "object") return null;
+  const item = raw as Record<string, unknown>;
+
+  const author =
+    item.author && typeof item.author === "object"
+      ? (item.author as Record<string, unknown>)
+      : null;
+
+  const handleSource =
+    (typeof author?.userName === "string" ? author.userName : null) ??
+    (typeof item.userName === "string" ? item.userName : null);
+  const text = typeof item.text === "string" ? item.text : null;
+  if (!handleSource || !text) return null;
+
+  const handle = handleSource.replace(/^@/, "");
+  const id = typeof item.id === "string" ? item.id : null;
+
+  return {
+    handle,
+    name: typeof author?.name === "string" ? author.name : null,
+    text,
+    url:
+      typeof item.url === "string"
+        ? item.url
+        : id
+          ? `https://x.com/${handle}/status/${id}`
+          : null,
   };
 }
 
@@ -211,6 +260,17 @@ export function buildMockUserTweets(handle: string): UserTweetsPage {
       engagement_score:
         metrics.like_count + metrics.retweet_count + metrics.reply_count,
       posted_at: new Date(now - (i + 1) * 3600_000).toISOString(),
+      // Every third mock post quotes someone, so the quote block is
+      // visible without an API key.
+      quoted:
+        i % 3 === 1
+          ? {
+              handle: "someone_else",
+              name: "Someone Else",
+              text: "[Mock quoted post] The post being reacted to, which is the half that carries the meaning.",
+              url: "https://x.com/someone_else/status/9000000000000000000",
+            }
+          : null,
     };
   });
 
