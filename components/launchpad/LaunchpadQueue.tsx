@@ -551,10 +551,13 @@ export function LaunchpadQueue({
                 Replies are sent by you, not by Launchpad.
               </span>{" "}
               Since 23 February 2026 X does not allow apps to reply to other
-              people&apos;s posts. Hit <span className="font-medium">Copy</span>,
-              paste it into the reply box on X, then{" "}
-              <span className="font-medium">Mark posted</span> to keep your
-              queue straight. Likes and follows still happen with one click.
+              people&apos;s posts. Hit{" "}
+              <span className="font-medium">Copy &amp; Post</span> — it copies
+              the draft and opens X&apos;s reply box in a new tab with the text
+              already in it, so you just press Post. Then{" "}
+              <span className="font-medium">Mark posted</span> back here to keep
+              your queue straight. Likes and follows still happen with one
+              click.
             </div>
           ) : null}
           <div className="flex flex-col gap-4">

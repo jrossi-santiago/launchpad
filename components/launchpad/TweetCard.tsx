@@ -96,6 +96,37 @@ export function TweetCard({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [confirmingFollow, setConfirmingFollow] = useState(false);
 
+  // X's reply composer, pre-filled. Opening this is an ordinary link a
+  // person then clicks Post on — it is not the API reply X restricted.
+  // The text param is best-effort: if X ever stops honouring it, the
+  // clipboard copy below still makes this a paste.
+  function replyIntentUrl(text: string): string {
+    const url = new URL("https://x.com/intent/tweet");
+    url.searchParams.set("in_reply_to", tweet.x_tweet_id);
+    url.searchParams.set("text", text);
+    return url.toString();
+  }
+
+  function handleCopyAndPost(draft: DraftRow) {
+    if (!draft.draft_text) return;
+
+    // Start the copy, then open the tab WITHOUT awaiting it. Awaiting
+    // first would end the user-gesture context and browsers would block
+    // the new tab as a popup — the copy still lands either way.
+    const copying = navigator.clipboard
+      ?.writeText(draft.draft_text)
+      .catch(() => undefined);
+
+    window.open(replyIntentUrl(draft.draft_text), "_blank", "noopener,noreferrer");
+
+    void Promise.resolve(copying).then(() => {
+      setCopiedId(draft.id);
+      setTimeout(() => {
+        setCopiedId((current) => (current === draft.id ? null : current));
+      }, 1500);
+    });
+  }
+
   async function handleCopy(draft: DraftRow) {
     if (!draft.draft_text) return;
     try {
@@ -276,19 +307,33 @@ export function TweetCard({
                       {(draft.draft_text ?? "").length}/280
                     </span>
                     <div className="flex items-center gap-2">
-      {/* With automated replying unavailable, Copy is the first step of
-                          the flow that actually works, so it leads. */}
                       <button
                         type="button"
                         onClick={() => void handleCopy(draft)}
-                        className={
-                          canAutoReply
-                            ? "rounded-full border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                            : "rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-zinc-700 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
-                        }
+                        className="rounded-full border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
                       >
                         {copiedId === draft.id ? "Copied" : "Copy"}
                       </button>
+
+                      {/* Copies, then opens X's reply composer in a new
+                          tab with the text already in it. The primary
+                          action whenever Launchpad cannot send the reply
+                          itself, since it is the shortest path that
+                          works. */}
+                      {draft.status === "posted" || tweetHasPostedDraft ? null : (
+                        <button
+                          type="button"
+                          onClick={() => handleCopyAndPost(draft)}
+                          title="Copies the reply and opens it in X's reply box in a new tab — you press Post there."
+                          className={
+                            canAutoReply
+                              ? "rounded-full border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                              : "rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-zinc-700 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
+                          }
+                        >
+                          Copy &amp; Post ↗
+                        </button>
+                      )}
 
                       {draft.status === "posted" ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-800 dark:bg-green-950 dark:text-green-300">
