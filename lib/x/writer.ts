@@ -121,6 +121,25 @@ async function accessTokenFor(
   };
 }
 
+// Since 23 Feb 2026 X refuses programmatic replies on every self-serve
+// plan: an app may only reply to a post whose author @mentioned or quoted
+// it, which is never true for the cold outreach this app is for. Only
+// Enterprise and Public Utility apps are exempt, so the escape hatch is an
+// explicit env flag rather than anything we can detect from a token.
+//
+// The legacy cookie path is not subject to it (it is not an API app at
+// all), and the mock path has nothing to refuse — so this only turns off
+// automated replying for officially connected accounts. Likes, follows and
+// standalone posts are unaffected either way: X restricted replies
+// specifically, and left non-replies alone.
+export function canAutoReply(connection: XConnectionRow): boolean {
+  if (resolveWriteProvider(connection) !== "oauth2") return true;
+  return process.env.X_ENTERPRISE_REPLY_ACCESS === "true";
+}
+
+export const AUTO_REPLY_BLOCKED_MESSAGE =
+  "X no longer allows apps to reply to other people's posts (a policy change on 23 Feb 2026 that applies to every self-serve plan). Use Copy, paste the reply into X yourself, then Mark posted.";
+
 export async function persistTokens(
   supabase: SupabaseServerClient,
   userId: string,
@@ -194,6 +213,12 @@ export async function postAs(
   text: string,
   replyToTweetId: string | null,
 ): Promise<XPostResult> {
+  // A reply through an official connection is refused here rather than
+  // sent: X rejects it, and an attempt still costs a billed API call.
+  if (replyToTweetId && !canAutoReply(connection)) {
+    throw new XConnectionError(AUTO_REPLY_BLOCKED_MESSAGE);
+  }
+
   switch (resolveWriteProvider(connection)) {
     case "oauth2":
       return withAccessToken(supabase, connection, (accessToken) =>

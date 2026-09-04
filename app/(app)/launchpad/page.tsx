@@ -5,6 +5,7 @@ import type { PostableDraft } from "@/components/launchpad/TweetCard";
 import type { TweetRow } from "@/lib/getx/tweet";
 import { getRegenerationUsage } from "@/lib/usage/regenerations";
 import { getAllActionUsage } from "@/lib/usage/actions";
+import { canAutoReply, type XConnectionRow } from "@/lib/x/writer";
 
 export default async function LaunchpadPage() {
   const supabase = await createClient();
@@ -83,7 +84,7 @@ export default async function LaunchpadPage() {
 
   const { data: xConnection } = await supabase
     .from("x_connections")
-    .select("x_handle")
+    .select("*")
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -92,6 +93,9 @@ export default async function LaunchpadPage() {
       initialItems={initialItems}
       initialUsage={initialUsage}
       xHandle={xConnection?.x_handle ?? null}
+      canAutoReply={
+        xConnection ? canAutoReply(xConnection as XConnectionRow) : false
+      }
       initialActionUsage={initialActionUsage}
     />
   );

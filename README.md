@@ -140,6 +140,28 @@ endpoint takes a numeric id rather than a handle. Posts containing a link
 are billed at a much higher rate than plain ones — worth knowing before
 drafts start including URLs at volume.
 
+### Replies are manual, by X's rule
+
+Since **23 February 2026** X refuses programmatic replies on every
+self-serve plan (Free, Basic, Pro, Pay-Per-Use): an app may only reply to
+a post whose author @mentioned or quoted it, which is never true for cold
+outreach. Only Enterprise and Public Utility apps are exempt.
+
+So for an officially connected account, Launchpad drafts the reply and
+you send it. **Copy & Post** copies the draft and opens
+`x.com/intent/tweet?in_reply_to=<id>&text=<draft>` in a new tab — X's own
+reply composer, already filled in — so sending is one click there and
+**Mark posted** back in Launchpad. The clipboard copy is deliberate
+redundancy: if X ever stops honouring the `text` parameter, the draft is
+still on the clipboard and the flow degrades to a paste rather than
+breaking. `canAutoReply()` in
+`lib/x/writer.ts` hides the Post button and refuses the API call before it
+is billed. Likes, follows and standalone posts are untouched — X
+restricted replies specifically.
+
+If you obtain Enterprise or Public Utility access, set
+`X_ENTERPRISE_REPLY_ACCESS=true` to turn the Post button back on.
+
 ### Adding a scheduler later
 
 `postAs(supabase, connection, text, replyToTweetId)` already posts a
