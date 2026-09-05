@@ -216,31 +216,70 @@ export type FeedCard = NetworkCard & {
 };
 
 // A phone has no room for one column per account, so the Feed is the same
-// cards in one stream: replies first, then chronological. Derived from
+// cards in one stream: new replies, then older replies, then the rest. Derived from
 // the stacks rather than queried separately — same rows, same window,
 // same already-decided filtering, no second trip to the database.
 //
 // The per-stack STACK_WINDOW slice still applies first, so one very
 // prolific account can contribute at most its window to the stream.
-// Cards carrying a written reply first, then everything else, each half
-// newest first.
+// A reply is "from this sweep" when it was written within this long of
+// the newest reply in the Feed. A sweep writes up to thirty replies four
+// at a time, so its own timestamps are spread over a couple of minutes —
+// they need to land in one bucket, while a reply carried over from an
+// earlier sweep (anything from minutes to the six-hour reuse window old)
+// needs to land in the other.
+export const SWEEP_WINDOW_MS = 10 * 60 * 1000;
+
+function replyWrittenAt(card: NetworkCard): number | null {
+  if (!card.suggested_reply || !card.suggested_reply_at) return null;
+  const written = Date.parse(card.suggested_reply_at);
+  return Number.isNaN(written) ? null : written;
+}
+
+// The most recently written reply in a Feed — the anchor everything else
+// is judged fresh or carried-over against. Derived from the rows
+// themselves rather than from when a sweep ran, so it survives a page
+// reload and needs no column of its own.
+export function newestReplyAt(cards: NetworkCard[]): number | null {
+  let newest: number | null = null;
+  for (const card of cards) {
+    const written = replyWrittenAt(card);
+    if (written !== null && (newest === null || written > newest)) newest = written;
+  }
+  return newest;
+}
+
+// True for a reply written in the same sweep as the newest one. False for
+// a card with no reply at all — "not fresh" and "not there" are different
+// things, and only the caller can tell them apart.
+export function isFreshReply(card: NetworkCard, anchor: number | null): boolean {
+  if (anchor === null) return false;
+  const written = replyWrittenAt(card);
+  return written !== null && anchor - written <= SWEEP_WINDOW_MS;
+}
+
+// Three bands: replies from the last sweep, replies carried over from an
+// earlier one, then everything with no reply — each band newest post
+// first.
 //
 // A reply exists because the model read the post and had something to say
-// about it, and a decline exists because it read the post and did not —
-// so "has a reply" is the closest thing the Feed has to a relevance
-// signal, and it costs nothing to sort on. Putting those at the top means
-// the work Reload just paid for is the first thing under your thumb,
-// instead of scattered through the stream by timestamp.
+// about it, and a decline exists because it read the post and did not, so
+// "has a reply" is the closest thing the Feed has to a relevance signal
+// and it costs nothing to sort on. Splitting that in two puts the work a
+// sweep just did above the work it did this morning, which is the
+// difference between a Feed that rewards pressing Reload and one where
+// the new replies are somewhere in the middle of it.
 //
-// Underneath, both halves stay chronological. The second half is not
-// ranked, demoted or hidden — a post with no reply is still a post you
-// might want, and the only thing being said about it is that nobody has
-// written anything for it yet.
-function byReplyThenNewest(a: NetworkCard, b: NetworkCard): number {
-  const left = a.suggested_reply ? 1 : 0;
-  const right = b.suggested_reply ? 1 : 0;
-  if (left !== right) return right - left;
-  return byNewest(a, b);
+// Within a band it is strictly chronological. Ordering fresh replies by
+// when each was *written* would sort them by which of four concurrent
+// calls came back first, which is nothing — the posts are what is being
+// ordered, and they go newest first like everywhere else.
+//
+// Nothing is ranked, scored or hidden: a post with no reply is still a
+// post, sitting where its timestamp says it should.
+function bandOf(card: NetworkCard, anchor: number | null): number {
+  if (!card.suggested_reply) return 2;
+  return isFreshReply(card, anchor) ? 0 : 1;
 }
 
 // The same order, applied to cards that are already flat. A sweep writes
@@ -248,18 +287,22 @@ function byReplyThenNewest(a: NetworkCard, b: NetworkCard): number {
 // step ahead of the database it read — sorting the stale copy would put
 // the replies it just wrote in the order they were missing.
 export function sortFeed(cards: FeedCard[]): FeedCard[] {
-  return [...cards].sort(byReplyThenNewest);
+  const anchor = newestReplyAt(cards);
+  return [...cards].sort((a, b) => {
+    const band = bandOf(a, anchor) - bandOf(b, anchor);
+    return band !== 0 ? band : byNewest(a, b);
+  });
 }
 
 export function flattenStacks(stacks: NetworkStack[]): FeedCard[] {
-  return stacks
-    .flatMap((stack) =>
+  return sortFeed(
+    stacks.flatMap((stack) =>
       stack.cards.map((card) => ({
         ...card,
         profile_id: stack.profile.id,
         handle: stack.profile.handle,
         display_name: stack.profile.display_name,
       })),
-    )
-    .sort(byReplyThenNewest);
+    ),
+  );
 }
