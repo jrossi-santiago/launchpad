@@ -12,6 +12,10 @@ export type QuickTarget = {
   content: string;
   cardId?: string;
   fetched?: unknown;
+  // The reply a Feed Reload already wrote for this post, if it had one.
+  // It opens with the sheet, so the sheet is never emptier than the card
+  // it was opened from.
+  suggestion?: string | null;
 };
 
 export type QuickDraft = { id: string; text: string };
@@ -165,6 +169,15 @@ function SheetBody({
           </div>
         ) : null}
 
+        {target.suggestion ? (
+          <Comment
+            text={target.suggestion}
+            source="Haiku · written on Reload"
+            sent={sentText === target.suggestion}
+            onSend={() => send(target.suggestion as string, null)}
+          />
+        ) : null}
+
         {drafts.map((draft) => (
           <Comment
             key={draft.id}
@@ -185,7 +198,7 @@ function SheetBody({
           />
         ))}
 
-        {templates.length === 0 && drafts.length === 0 ? (
+        {templates.length === 0 && drafts.length === 0 && !target.suggestion ? (
           <p className="rounded-xl border border-dashed border-zinc-300 p-4 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
             Your brand pack has no reply templates yet. Add some on Home and
             they show up here instantly.
@@ -205,7 +218,9 @@ function SheetBody({
           >
             {draftsState === "working"
               ? "Writing three replies…"
-              : "Draft replies for this post"}
+              : target.suggestion
+                ? "Write three more for this post"
+                : "Draft replies for this post"}
           </button>
         ) : null}
 

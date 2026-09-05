@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FeedCard } from "@/lib/network/stack";
+import { copyAndOpenReply } from "@/lib/x/intent";
 import { formatAge } from "@/components/network/NetworkCard";
 import {
   QuickCommentSheet,
@@ -14,6 +15,36 @@ import {
 const PULL_THRESHOLD = 70;
 
 type CardState = "live" | "liking" | "liked" | "gone";
+
+// What one Reload did, as the route reports it.
+type ReloadSummary = {
+  considered: number;
+  written: number;
+  reused: number;
+  failed: number;
+  budgetReached: boolean;
+};
+
+// Reload is the only thing on this page that can take a minute, so it says
+// what it is doing rather than spinning silently.
+function describeReload(summary: ReloadSummary): string {
+  if (summary.considered === 0) {
+    return "Nothing new from your accounts — the Feed is up to date.";
+  }
+
+  const parts: string[] = [];
+  if (summary.written > 0) {
+    parts.push(`${summary.written} ${summary.written === 1 ? "reply" : "replies"} written`);
+  }
+  if (summary.reused > 0) parts.push(`${summary.reused} already had one`);
+  if (summary.failed > 0) parts.push(`${summary.failed} couldn't be written`);
+  if (parts.length === 0) return "Pulled the newest posts. Nothing needed a new reply.";
+
+  const tail = summary.budgetReached
+    ? " Reload again for the rest."
+    : "";
+  return `${parts.join(", ")}.${tail}`;
+}
 
 export function FeedStream({
   initialFeed,
@@ -33,6 +64,11 @@ export function FeedStream({
 }) {
   const [feed, setFeed] = useState<FeedCard[]>(initialFeed);
   const [refreshing, setRefreshing] = useState(false);
+  const [reloading, setReloading] = useState(false);
+  const [reloadNote, setReloadNote] = useState<string | null>(null);
+  // The card whose written reply was last handed to X, so the button can
+  // say so — the same acknowledgement the quick-comment sheet gives.
+  const [sentSuggestion, setSentSuggestion] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(initialError);
   const [cardStates, setCardStates] = useState<Record<string, CardState>>({});
   const [pull, setPull] = useState(0);
@@ -84,6 +120,34 @@ export function FeedStream({
     refresh(true);
   }
 
+  // Reload: poll every watched account for its newest posts and have
+  // Haiku read each one and write a reply for it. One request — the
+  // polling and the writing both happen server-side — which is why this
+  // waits rather than streaming, and why the button says how long it is
+  // going to be.
+  async function handleReloadClick() {
+    if (reloading || refreshing) return;
+    setReloading(true);
+    setError(null);
+    setReloadNote(null);
+
+    try {
+      const response = await fetch("/api/feed/reload", { method: "POST" });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.error ?? `Reload failed (${response.status}).`);
+      }
+
+      setFeed((body?.feed ?? []) as FeedCard[]);
+      setCardStates({});
+      if (body?.summary) setReloadNote(describeReload(body.summary as ReloadSummary));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reload your Feed.");
+    } finally {
+      setReloading(false);
+    }
+  }
+
   // Pull to refresh, done with the page's own scroll position: the drag
   // only counts when the stream is already at the top, so it never fights
   // an ordinary scroll.
@@ -92,19 +156,28 @@ export function FeedStream({
   }
 
   function onTouchMove(event: React.TouchEvent) {
-    if (pullStart.current === null || refreshing) return;
+    if (pullStart.current === null || refreshing || reloading) return;
     const distance = event.touches[0].clientY - pullStart.current;
     setPull(distance > 0 ? Math.min(distance, PULL_THRESHOLD + 20) : 0);
   }
 
   function onTouchEnd() {
-    if (pull >= PULL_THRESHOLD && !refreshing) {
+    if (pull >= PULL_THRESHOLD && !refreshing && !reloading) {
       setRefreshing(true);
       setError(null);
       refresh(true);
     }
     pullStart.current = null;
     setPull(0);
+  }
+
+  // Straight from the card: copy the written reply and open X's composer
+  // on that post. No queue row, no second call — the reply already exists,
+  // and this is the whole point of having written it up front.
+  function sendSuggested(card: FeedCard) {
+    if (!card.suggested_reply) return;
+    copyAndOpenReply(card.x_tweet_id, card.suggested_reply);
+    setSentSuggestion(card.id);
   }
 
   function setCardState(cardId: string, state: CardState) {
@@ -157,6 +230,9 @@ export function FeedStream({
       authorHandle: `@${card.handle}`,
       content: card.content ?? "",
       cardId: card.id,
+      // A reply Reload already wrote for this post opens with the sheet,
+      // so the sheet is never emptier than the card behind it.
+      suggestion: card.suggested_reply,
     });
     setDrafts([]);
     setDraftsState("idle");
@@ -241,12 +317,50 @@ export function FeedStream({
         <button
           type="button"
           onClick={handleRefreshClick}
-          disabled={refreshing}
+          disabled={refreshing || reloading}
           className="min-h-11 shrink-0 rounded-full border border-zinc-300 px-4 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
         >
           {refreshing ? "Refreshing…" : "Refresh"}
         </button>
       </div>
+
+      {/* The one button this page is for: the newest posts from everyone
+          you watch, each with a reply already written for it. Full width
+          and thumb-height because on a phone it is the first thing you
+          press and often the only one. */}
+      <button
+        type="button"
+        onClick={() => void handleReloadClick()}
+        disabled={reloading || refreshing || !hasProfiles}
+        className="flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-zinc-900 px-5 text-base font-semibold text-white shadow-sm transition-colors hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
+      >
+        {reloading ? (
+          <>
+            <span
+              aria-hidden
+              className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+            />
+            Reading posts, writing replies…
+          </>
+        ) : (
+          <>
+            <span aria-hidden>↻</span>
+            Reload
+          </>
+        )}
+      </button>
+
+      <p className="-mt-2 text-center text-xs text-zinc-400 dark:text-zinc-500">
+        {reloading
+          ? "Pulling the newest posts from every account you watch. This takes a moment."
+          : "Pulls the latest posts from every account you watch and writes a reply for each one."}
+      </p>
+
+      {reloadNote ? (
+        <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
+          {reloadNote}
+        </p>
+      ) : null}
 
       {pull > 0 || refreshing ? (
         <p className="text-center text-xs text-zinc-400 dark:text-zinc-500">
@@ -317,6 +431,26 @@ export function FeedStream({
                   </div>
                 ) : null}
 
+                {card.suggested_reply ? (
+                  <div className="flex flex-col gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 dark:border-emerald-900 dark:bg-emerald-950/30">
+                    <span className="text-[10px] font-medium tracking-wider text-emerald-700 uppercase dark:text-emerald-300">
+                      Written for this post
+                    </span>
+                    <p className="text-sm leading-relaxed whitespace-pre-wrap text-emerald-900 dark:text-emerald-100">
+                      {card.suggested_reply}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => sendSuggested(card)}
+                      className="min-h-11 rounded-full bg-emerald-700 px-4 text-sm font-medium text-white transition-colors hover:bg-emerald-800 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+                    >
+                      {sentSuggestion === card.id
+                        ? "Copied — finish in X ↗"
+                        : "Copy & open X ↗"}
+                    </button>
+                  </div>
+                ) : null}
+
                 <div className="flex items-center gap-3 text-xs text-zinc-500 dark:text-zinc-400">
                   <span>{card.metrics.like_count} likes</span>
                   <span>{card.metrics.retweet_count} retweets</span>
@@ -339,7 +473,7 @@ export function FeedStream({
                     onClick={() => openSheet(card)}
                     className="min-h-11 flex-1 rounded-full bg-zinc-900 px-4 text-sm font-medium text-white transition-colors hover:bg-zinc-700 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
                   >
-                    Reply
+                    {card.suggested_reply ? "More replies" : "Reply"}
                   </button>
                   <button
                     type="button"
