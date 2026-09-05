@@ -58,7 +58,7 @@ app/
   auth/callback/route.ts    Exchanges the magic-link code for a session
   (app)/                    Authenticated shell (redirects to /login if signed out)
     layout.tsx               Sidebar (desktop) + tab bar (mobile) + session check
-    scheduler/page.tsx        Tab 1 — post creator + scheduling, not built yet
+    scheduler/page.tsx        Tab 1 — post composer + the queue of what's lined up
     heatcheck/page.tsx        Tab 2 — today's hottest posts, one comment each
     commenter/                Tab 3 — the daily commenting loop
       layout.tsx               Feed / Queue segmented header
@@ -90,7 +90,7 @@ as a diff on every file that touches them.
 
 | Tab | Route | What it is for |
 | --- | --- | --- |
-| **Scheduler** | `/scheduler` | Your own posts — write with AI help, line them up. Not built yet. |
+| **Scheduler** | `/scheduler` | Your own posts — write, sharpen with Haiku, line them up. |
 | **HeatCheck** | `/heatcheck` | The posts in your niche that are hot *right now*, one comment each. |
 | **Commenter** | `/commenter` | The daily loop: the accounts you watch, and the queue of posts you kept. |
 | **You** | `/you` | Network, Leads, Brand Pack — plus plan, X connection and logout. |
@@ -379,13 +379,92 @@ restricted replies specifically.
 If you obtain Enterprise or Public Utility access, set
 `X_ENTERPRISE_REPLY_ACCESS=true` to turn the Post button back on.
 
-### Adding a scheduler later
+## The Scheduler
 
-The `/scheduler` tab is the placeholder for this.
+Your own posts. One post per row, sent by a worker rather than by you
+being awake at 07:00.
 
-`postAs(supabase, connection, text, replyToTweetId)` already posts a
-standalone post when `replyToTweetId` is `null`. A scheduler needs a
-queue table and a worker that calls it — no new provider code, and no
-change to how tokens are refreshed. Standalone posting is deliberately
-refused on the legacy cookie path: a steady automated cadence through
-scraped cookies is the most restriction-prone pattern there is.
+### What it is made of
+
+| Piece | Where |
+| --- | --- |
+| The queue table | `supabase/migrations/0022_scheduled_posts.sql` |
+| Composer + queue UI | `components/scheduler/SchedulerTab.tsx` |
+| Eastern ↔ UTC | `lib/time/eastern.ts` |
+| The one send path | `lib/scheduler/publish.ts` |
+| The worker | `app/api/scheduler/run/route.ts`, `vercel.json` |
+| Sharpen | `lib/anthropic/sharpen.ts` |
+
+No new provider code: `postAs(supabase, connection, text, null)` in
+`lib/x/writer.ts` already posted a standalone post, and it still does.
+
+### Time
+
+Stored UTC, always — the database never holds a local time, so the worker
+has no zone to get wrong. Eastern exists only in the browser:
+`lib/time/eastern.ts` converts what you type into UTC, and the composer
+shows both while you type ("Sun, Sep 6, 8:00 AM EDT — stored as 12:00
+UTC"). EDT vs EST comes from `Intl`, so it is right on both sides of the
+switch rather than a fixed offset that is wrong for several weeks a year.
+
+### The worker
+
+Vercel Cron hits `GET /api/scheduler/run` every five minutes. It is a GET
+that sends posts — the one place the app breaks that rule, because that
+is what Vercel Cron issues — so it refuses to run at all unless
+`CRON_SECRET` is set and matches, compared in constant time.
+
+It claims work with `claim_due_scheduled_posts()`, a `security definer`
+function that marks rows claimed in the same statement that selects them,
+under `for update skip locked`. That is the whole defence against a double
+post: two overlapping runs cannot take the same row, and X has no
+idempotency key to fall back on. A row stuck in `claimed` for ten minutes
+(a worker that died mid-send) is taken back on the next run.
+
+The worker holds `SUPABASE_SERVICE_ROLE_KEY` — it acts for someone who is
+not signed in, so RLS does not apply to it. `lib/supabase/service.ts` is
+the only file that builds that client, and it says so at the top: a
+missing `.eq("user_id", …)` in worker code is not an empty result any
+more.
+
+Failures are classified before they are stored. No X connection, a
+cookie-only connection, or the daily cap are `permanent` — the row goes
+straight to `failed` with the reason on the card, rather than being
+retried twice more to fail the same way. Anything else goes back to
+`scheduled` for the next tick, up to three attempts.
+
+**On Vercel Hobby, cron runs once a day.** Minute-level schedules need
+Pro; on Hobby the `*/5` in `vercel.json` is silently reduced, and posts
+go out on the daily tick instead of on time.
+
+### Limits
+
+Five sends per UTC day (`POST_DAILY_LIMIT`), counted off `scheduled_posts`
+rows that actually posted — the same "count what happened since the day
+boundary" shape as `getActionUsage()`, with no parallel counter to drift.
+It is a cap on sends, not on drafts: line up as many as you like. It is
+checked again at send time, because five posts lined up on Monday can all
+come due on Tuesday.
+
+### Sharpen
+
+`Sharpen` sends your draft to Haiku and gets it back tighter. It may cut,
+reorder and tighten; it may not add a fact, a number, or a claim that was
+not in your draft — inventing a metric on the founder's own account is the
+one failure that actually costs something. Nothing is stored: the
+suggestion sits next to your draft with **Use this** and **Keep mine**,
+because a sharpened post you never accepted is not a post.
+
+### One hard constraint
+
+Standalone posting only works through an **officially connected X
+account**. `lib/x/writer.ts` refuses it on the legacy cookie path, and
+deliberately: a steady automated cadence through scraped cookies is the
+most restriction-prone pattern there is. The tab says so at the top rather
+than letting it surface as a failed post at 07:00.
+
+### Threads
+
+Not modelled. V1 is one post per row. Adding threads later is a `segments
+jsonb` column and a loop in the worker, not a reshaping of the table.
+
