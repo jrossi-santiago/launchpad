@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { CtaToggle } from "@/components/comment/CtaToggle";
 import { isFreshReply, newestSweepId, type FeedCard } from "@/lib/network/stack";
-import { copyAndOpenReply } from "@/lib/x/intent";
+import { copyAndOpenReply, withCta } from "@/lib/x/intent";
 import { formatAge } from "@/components/network/NetworkCard";
 import {
   QuickCommentSheet,
@@ -98,6 +99,9 @@ export function FeedStream({
   const [sentSuggestion, setSentSuggestion] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(initialError);
   const [cardStates, setCardStates] = useState<Record<string, CardState>>({});
+  // Cards showing their CTA. A Reload rewrites the replies underneath, so
+  // this is cleared with them rather than left pointing at old asks.
+  const [ctaOn, setCtaOn] = useState<Set<string>>(new Set());
   const [pull, setPull] = useState(0);
 
   const [target, setTarget] = useState<QuickTarget | null>(null);
@@ -123,6 +127,7 @@ export function FeedStream({
           throw new Error(body?.error ?? `Refresh failed (${response.status}).`);
         }
         setFeed((body?.feed ?? []) as FeedCard[]);
+        setCtaOn(new Set());
         setCardStates({});
         setRefreshing(false);
       })
@@ -171,6 +176,7 @@ export function FeedStream({
       }
 
       setFeed((body?.feed ?? []) as FeedCard[]);
+      setCtaOn(new Set());
       setCardStates({});
       setSentSuggestion(null);
       if (body?.summary) {
@@ -217,8 +223,22 @@ export function FeedStream({
   // and this is the whole point of having written it up front.
   function sendSuggested(card: FeedCard) {
     if (!card.suggested_reply) return;
-    copyAndOpenReply(card.x_tweet_id, card.suggested_reply);
+    // What goes to X is what the card is showing: the reply, plus the CTA
+    // only if this card has it turned on.
+    copyAndOpenReply(
+      card.x_tweet_id,
+      withCta(card.suggested_reply, ctaOn.has(card.id) ? card.suggested_cta : null),
+    );
     setSentSuggestion(card.id);
+  }
+
+  function toggleCta(cardId: string) {
+    setCtaOn((current) => {
+      const next = new Set(current);
+      if (next.has(cardId)) next.delete(cardId);
+      else next.add(cardId);
+      return next;
+    });
   }
 
   function setCardState(cardId: string, state: CardState) {
@@ -280,6 +300,7 @@ export function FeedStream({
       // A reply Reload already wrote for this post opens with the sheet,
       // so the sheet is never emptier than the card behind it.
       suggestion: card.suggested_reply,
+      suggestionCta: card.suggested_cta,
     });
     setDrafts([]);
     setDraftsState("idle");
@@ -320,9 +341,17 @@ export function FeedStream({
         throw new Error(draftBody?.error ?? "Couldn't write drafts for that post.");
       }
 
-      const written = ((draftBody?.drafts ?? []) as { id: string; draft_text: string | null }[])
+      const written = ((draftBody?.drafts ?? []) as {
+        id: string;
+        draft_text: string | null;
+        draft_cta: string | null;
+      }[])
         .filter((draft) => Boolean(draft.draft_text))
-        .map((draft) => ({ id: draft.id, text: draft.draft_text as string }));
+        .map((draft) => ({
+          id: draft.id,
+          text: draft.draft_text as string,
+          cta: draft.draft_cta ?? null,
+        }));
 
       setDrafts(written);
       setDraftsState("ready");
@@ -548,6 +577,11 @@ export function FeedStream({
                     >
                       {card.suggested_reply}
                     </p>
+                    <CtaToggle
+                      cta={card.suggested_cta}
+                      on={ctaOn.has(card.id)}
+                      onToggle={() => toggleCta(card.id)}
+                    />
                     <button
                       type="button"
                       onClick={() => sendSuggested(card)}

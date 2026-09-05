@@ -1,4 +1,14 @@
 import type { BrandPackRow } from "@/lib/anthropic/brandPack";
+import {
+  BREVITY_RULES,
+  COMMENT_MAX,
+  CTA_FIELD,
+  CTA_RULES,
+  POINT_FIELD,
+  cleanCta,
+  isSubstantivePoint,
+  isUsableComment,
+} from "@/lib/anthropic/comment";
 import type { PostContext, QuotedPost } from "@/lib/getx/userTweets";
 
 // One reply, written for one post, for the Feed's Reload button.
@@ -9,8 +19,9 @@ import type { PostContext, QuotedPost } from "@/lib/getx/userTweets";
 // them. Reload is the other direction: it writes a single ready reply for
 // every fresh post so the Feed arrives already answerable, and it does so
 // for many posts at once, which makes both the prompt and the budget
-// different. What they share is the Brand Pack and the 280-character
-// ceiling.
+// different. What they share is the Brand Pack and the comment rules in
+// lib/anthropic/comment.ts — one point, said short, with the ask kept as
+// its own line.
 
 export type ReplyTarget = {
   handle: string;
@@ -25,38 +36,53 @@ export type ReplyTarget = {
   context: PostContext | null;
 };
 
-const SAVE_REPLY_TOOL = {
-  name: "save_reply",
-  description:
-    "Say what this post is about, then reply to it — or say you cannot tell what it is about and decline.",
-  input_schema: {
-    type: "object",
-    properties: {
-      about: {
-        type: "string",
-        description:
-          "What this post is actually saying, in plain language, as you would explain it to someone who had not seen it. Name the specific thing it is about — the tool, the claim, the event, the argument. Not a description of its shape ('a post about productivity'), and not a restatement of its words.",
+// The CTA field only exists on an on-territory request. Off territory the
+// founder's positioning is deliberately absent from the request (see the
+// note below), so there is nothing for an honest ask to name — and a
+// model asked for one anyway would invent the asset. A tool with no `cta`
+// property cannot be answered with a made-up one.
+function saveReplyTool(onTerritory: boolean) {
+  return {
+    name: "save_reply",
+    description:
+      "Say what this post is about, then reply to it — or say you cannot tell what it is about and decline.",
+    input_schema: {
+      type: "object",
+      properties: {
+        about: {
+          type: "string",
+          description:
+            "What this post is actually saying, in plain language, as you would explain it to someone who had not seen it. Name the specific thing it is about — the tool, the claim, the event, the argument. Not a description of its shape ('a post about productivity'), and not a restatement of its words.",
+        },
+        unclear: {
+          type: "string",
+          description:
+            "What you cannot tell from what you were given: a link you cannot open, an image you cannot see, a person or product you do not recognise, jargon whose meaning changes the point, a conversation you are missing. Empty string when the post stands on its own.",
+        },
+        can_reply: {
+          type: "boolean",
+          description:
+            "True only if you could reply as someone who genuinely follows this, without guessing at anything in `unclear`. False if a reply would require pretending to know what this is about.",
+        },
+        point: POINT_FIELD,
+        reply: {
+          type: "string",
+          maxLength: COMMENT_MAX,
+          description: `The reply, as one interested person talking to another. ${COMMENT_MAX} characters or fewer, one sentence — two only if the second is a question — and about what you described in \`about\`. Empty string when can_reply is false.`,
+        },
+        ...(onTerritory ? { cta: CTA_FIELD } : {}),
       },
-      unclear: {
-        type: "string",
-        description:
-          "What you cannot tell from what you were given: a link you cannot open, an image you cannot see, a person or product you do not recognise, jargon whose meaning changes the point, a conversation you are missing. Empty string when the post stands on its own.",
-      },
-      can_reply: {
-        type: "boolean",
-        description:
-          "True only if you could reply as someone who genuinely follows this, without guessing at anything in `unclear`. False if a reply would require pretending to know what this is about.",
-      },
-      reply: {
-        type: "string",
-        maxLength: 280,
-        description:
-          "The reply, as one interested person talking to another. Under 280 characters, and about what you described in `about`. Empty string when can_reply is false.",
-      },
+      required: [
+        "about",
+        "unclear",
+        "can_reply",
+        "point",
+        "reply",
+        ...(onTerritory ? ["cta"] : []),
+      ],
     },
-    required: ["about", "unclear", "can_reply", "reply"],
-  },
-} as const;
+  } as const;
+}
 
 // The tool's field order is the comprehension check, and it replaces the
 // `hook` field that used to sit here. A hook asked the model to copy a
@@ -121,9 +147,11 @@ const SYSTEM_PROMPT = [
   "- Never write a reply that would fit any other post.",
   "",
   "Never pitch the founder's product, never link, no hashtags unless the brand voice uses them.",
-  "It must read like a person typing a quick reply on their phone. One or two sentences, and it is fine if it does not wrap up neatly. Lowercase is fine if the voice notes suggest it.",
-  "It MUST fit 280 characters including spaces and punctuation — tighten the wording rather than truncate.",
+  "It must read like a person typing a quick reply on their phone, and it is fine if it does not wrap up neatly. Lowercase is fine if the voice notes suggest it.",
+  ...BREVITY_RULES,
   "The founder's voice guardrails ('never say') override everything above.",
+  "",
+  "Name what your reply adds in `point` before you write it — the result you got, the case that went the other way, the detail people miss, the thing you actually want to know. A reply whose only point is that the post is right is not a reply; say what you would want to know instead.",
   "",
   "Before any of that: work out what the post is actually about, and say so in `about`. Name the real subject — the tool, the claim, the event, the argument — the way you would explain it to someone who had not seen it. If you cannot name it, you have not understood it.",
   "",
@@ -158,6 +186,9 @@ const ON_TERRITORY_PROMPT = [
   "Let it show in the substance: the thing you only know from doing this, the distinction that matters, the trap people fall into. Positioning and ICP are given to you as context for what this person understands — never as something to work into the reply.",
   "It still must not be a pitch. No product name, no link, no 'we built this', no 'that is exactly what we solve', no offer to help, no DM.",
   "Knowing the subject is what earns attention here. Talking about your company is what loses it.",
+  "",
+  "Because this one is on your ground, also write a `cta` — the line the founder may append under the reply when they decide this post is worth an ask.",
+  ...CTA_RULES,
 ];
 
 function systemPrompt(onTerritory: boolean): string {
@@ -221,7 +252,7 @@ export function buildFeedReplyRequest(
         }),
       },
     ],
-    tools: [SAVE_REPLY_TOOL],
+    tools: [saveReplyTool(onTerritory)],
     tool_choice: { type: "tool", name: "save_reply" },
   };
 }
@@ -234,13 +265,18 @@ export type FeedReplyResult = {
   reply: string | null;
   about: string;
   unclear: string | null;
+  // The ask, written apart from the reply and only ever on an
+  // on-territory post. Null everywhere else, and null is the common case.
+  cta: string | null;
 };
 
 type ReplyToolInput = {
   about: string;
   unclear: string;
   can_reply: boolean;
+  point: string;
   reply: string;
+  cta?: string;
 };
 
 function isReplyToolInput(input: unknown): input is ReplyToolInput {
@@ -250,15 +286,17 @@ function isReplyToolInput(input: unknown): input is ReplyToolInput {
     typeof value.about === "string" &&
     typeof value.unclear === "string" &&
     typeof value.can_reply === "boolean" &&
+    typeof value.point === "string" &&
     typeof value.reply === "string"
   );
 }
 
-// A reply the model believes it can write still has to be usable: present,
-// and inside X's limit. Anything else earns the one corrective retry.
+// A reply the model believes it can write still has to be usable:
+// present, and inside the comment budget — which is far under X's limit,
+// because the budget is what keeps replies to one point and leaves room
+// for a CTA under them. Anything else earns the one corrective retry.
 function isUsableReply(input: ReplyToolInput): boolean {
-  const trimmed = input.reply.trim();
-  return trimmed.length > 0 && trimmed.length <= 280;
+  return isUsableComment(input.reply);
 }
 
 // An `about` that describes the post's shape rather than its subject — "a
@@ -321,8 +359,14 @@ export async function callHaikuFeedReply(
   const request = buildFeedReplyRequest(brandPack, target, onTerritory);
   let result = await requestReply(request);
 
+  // A reply that names no point is retried for the same reason one that
+  // ran long is: both are the model writing before it worked out what it
+  // was adding.
   const needsRetry =
-    result.can_reply && (!isUsableReply(result) || !isSubstantiveAbout(result.about));
+    result.can_reply &&
+    (!isUsableReply(result) ||
+      !isSubstantiveAbout(result.about) ||
+      !isSubstantivePoint(result.point));
 
   if (needsRetry) {
     result = await requestReply({
@@ -331,12 +375,12 @@ export async function callHaikuFeedReply(
         ...request.messages,
         {
           role: "assistant",
-          content: `Previous about: ${result.about}\nPrevious reply: ${result.reply}`,
+          content: `Previous about: ${result.about}\nPrevious point: ${result.point}\nPrevious reply: ${result.reply}`,
         },
         {
           role: "user",
           content:
-            "That did not work. In `about`, name the specific thing this post is about — the tool, claim, event or argument — not the kind of post it is. Then write a reply to that, under 280 characters. If you genuinely cannot tell what the post is about, set can_reply to false and leave the reply empty; that is a fine answer.",
+            `That did not work. In \`about\`, name the specific thing this post is about — the tool, claim, event or argument — not the kind of post it is. In \`point\`, name the one thing your reply adds that the post does not already say. Then write that reply, ${COMMENT_MAX} characters or fewer. If you genuinely cannot tell what the post is about, set can_reply to false and leave the reply empty; that is a fine answer.`,
         },
       ],
     });
@@ -346,10 +390,17 @@ export async function callHaikuFeedReply(
   const unclear = result.unclear.trim() || null;
 
   if (!result.can_reply || !isUsableReply(result)) {
-    return { reply: null, about, unclear };
+    return { reply: null, about, unclear, cta: null };
   }
 
-  return { reply: result.reply.trim(), about, unclear };
+  return {
+    reply: result.reply.trim(),
+    about,
+    unclear,
+    // Absent from the tool off territory, so this is null for almost
+    // every card by construction rather than by policy.
+    cta: cleanCta(result.cta),
+  };
 }
 
 export function buildMockFeedReply(target: ReplyTarget): FeedReplyResult {
@@ -358,5 +409,6 @@ export function buildMockFeedReply(target: ReplyTarget): FeedReplyResult {
     reply: `[Mock reply to @${target.handle}] re: "${snippet}" — set ANTHROPIC_API_KEY to have Haiku read this post and write a real reply.`,
     about: `A mock reading of @${target.handle}'s post, produced without a model.`,
     unclear: null,
+    cta: "Want the mock process? Reply and I'll send it.",
   };
 }

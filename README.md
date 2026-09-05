@@ -161,6 +161,39 @@ there is no callback from the composer — so returning to the tab asks
 template has no `drafts` row behind it, which is exactly the trade for
 it being instant.
 
+### Comment length, and the CTA
+
+Every comment the app writes — HeatCheck's, Feed Reload's, and the queue's
+draft options — obeys the same two rules, defined once in
+`lib/anthropic/comment.ts`:
+
+- **180 characters, not 280.** X's limit was being read as a target and
+  filled: three sentences of agreement where one point would do. The
+  budget is now a third shorter than the platform allows, enforced by the
+  tool schema *and* by the validators that trigger the corrective retry.
+- **A named point, generated before the comment.** Tool arguments come
+  back in schema order, so `point` — the one thing this comment adds that
+  the post does not already contain — has to exist before the comment can
+  be written from it. A comment whose only point is that the post is right
+  is sent back to be rewritten.
+
+The remaining characters are held for a **CTA**: one line, 80 characters
+or fewer, written by the same call but kept in its own field and its own
+column (`network_tweets.suggested_cta`, `drafts.draft_cta`). It is never
+appended by the model. The card shows the comment alone and offers a
+**+ CTA** chip; whatever is on screen is exactly what the copy button
+copies and what the post endpoint sends.
+
+A CTA can only name something real, so it is only asked for when the
+founder's positioning is legitimately in the request: HeatCheck (which has
+always carried the whole Brand Pack), the few Feed posts the on-territory
+gate judged adjacent, and the queue's reply drafts, where the positioning
+arrives as a single `offer` field fenced to that one use. Off-territory
+Feed replies do not have the field in their tool schema at all, so there
+is nothing to invent an asset from. The `@grok` drafts never carry one
+either: the point of tagging Grok is a public answer in the thread, and an
+ask stapled underneath reads as bait.
+
 ## Network
 
 Network watches a set of X accounts and lays their latest original posts out

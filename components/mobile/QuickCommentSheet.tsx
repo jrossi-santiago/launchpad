@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { copyAndOpenReply } from "@/lib/x/intent";
+import { CtaToggle } from "@/components/comment/CtaToggle";
+import { copyAndOpenReply, withCta } from "@/lib/x/intent";
 
 export type QuickTarget = {
   // The post being replied to. `cardId` is set when it came from the Feed,
@@ -14,11 +15,13 @@ export type QuickTarget = {
   fetched?: unknown;
   // The reply a Feed Reload already wrote for this post, if it had one.
   // It opens with the sheet, so the sheet is never emptier than the card
-  // it was opened from.
+  // it was opened from — and it brings its CTA with it, so turning the
+  // ask on works the same here as it does on the card.
   suggestion?: string | null;
+  suggestionCta?: string | null;
 };
 
-export type QuickDraft = { id: string; text: string };
+export type QuickDraft = { id: string; text: string; cta: string | null };
 
 export type DraftsState = "idle" | "working" | "ready" | "failed";
 
@@ -28,15 +31,23 @@ export type DraftsState = "idle" | "working" | "ready" | "failed";
 // post, which only exist once the post is in the queue.
 function Comment({
   text,
+  cta,
   source,
   onSend,
   sent,
 }: {
   text: string;
+  // Null on templates and on the @grok draft, which never carry one.
+  cta?: string | null;
   source: string;
-  onSend: () => void;
+  // Given the text as it stands — comment alone, or comment plus the CTA
+  // this one is showing — so the sheet sends exactly what is on screen.
+  onSend: (text: string) => void;
   sent: boolean;
 }) {
+  const [ctaOn, setCtaOn] = useState(false);
+  const full = withCta(text, ctaOn ? (cta ?? null) : null);
+
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
       <span className="text-[10px] font-medium tracking-wider text-zinc-400 uppercase dark:text-zinc-500">
@@ -45,9 +56,14 @@ function Comment({
       <p className="text-sm leading-relaxed whitespace-pre-wrap text-zinc-800 dark:text-zinc-200">
         {text}
       </p>
+      <CtaToggle
+        cta={cta ?? null}
+        on={ctaOn}
+        onToggle={() => setCtaOn((on) => !on)}
+      />
       <button
         type="button"
-        onClick={onSend}
+        onClick={() => onSend(full)}
         className="min-h-11 rounded-full bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-zinc-700 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
       >
         {sent ? "Copied — finish in X ↗" : "Copy & open X ↗"}
@@ -106,6 +122,12 @@ function SheetBody({
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [pendingDraftId]);
+
+  // Matched on the prefix, not on equality: what was sent may carry a CTA
+  // the comment itself does not, and it is still the same comment.
+  function wasSent(text: string): boolean {
+    return sentText !== null && sentText.startsWith(text);
+  }
 
   function send(text: string, draftId: string | null) {
     copyAndOpenReply(target.xTweetId, text);
@@ -172,9 +194,10 @@ function SheetBody({
         {target.suggestion ? (
           <Comment
             text={target.suggestion}
+            cta={target.suggestionCta}
             source="Haiku · written on Reload"
-            sent={sentText === target.suggestion}
-            onSend={() => send(target.suggestion as string, null)}
+            sent={wasSent(target.suggestion)}
+            onSend={(text) => send(text, null)}
           />
         ) : null}
 
@@ -182,9 +205,10 @@ function SheetBody({
           <Comment
             key={draft.id}
             text={draft.text}
+            cta={draft.cta}
             source="Haiku · written for this post"
-            sent={sentText === draft.text}
-            onSend={() => send(draft.text, draft.id)}
+            sent={wasSent(draft.text)}
+            onSend={(text) => send(text, draft.id)}
           />
         ))}
 
@@ -193,8 +217,8 @@ function SheetBody({
             key={`template-${index}`}
             text={template}
             source="Template · your voice"
-            sent={sentText === template}
-            onSend={() => send(template, null)}
+            sent={wasSent(template)}
+            onSend={(text) => send(text, null)}
           />
         ))}
 
