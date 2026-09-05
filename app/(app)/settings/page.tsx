@@ -19,6 +19,11 @@ function readParam(
 
 const MOBILE_LINKS = [
   {
+    href: "/launchpad",
+    label: "Queue",
+    description: "Posts you saved, with drafts written for them",
+  },
+  {
     href: "/network",
     label: "Network",
     description: "Watched accounts, one card stack each",

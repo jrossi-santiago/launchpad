@@ -8,6 +8,7 @@ const primaryNav = [
   { href: "/home", label: "Home" },
   { href: "/feed", label: "Feed" },
   { href: "/explore", label: "Explore" },
+  { href: "/heatcheck", label: "HeatCheck" },
   { href: "/radar", label: "Radar" },
   { href: "/network", label: "Network" },
   { href: "/launchpad", label: "Launchpad" },

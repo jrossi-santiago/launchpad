@@ -5,9 +5,10 @@ import { usePathname } from "next/navigation";
 
 // Four destinations, because a thumb reaching the bottom of a phone can
 // hold about that many: the two things worth replying to (people you
-// watch, strangers who match your brand pack), the queue of what you
-// already picked up, and everything about you. Network, Radar and Leads
-// are still there — they live one tap deeper, under You.
+// watch, strangers who match your brand pack), the one thing that is
+// only worth doing while it is still hot, and everything about you.
+// Queue, Network, Radar and Leads are still there — they live one tap
+// deeper, under You.
 const TABS = [
   {
     href: "/feed",
@@ -21,9 +22,10 @@ const TABS = [
     path: "M18 11a7 7 0 1 1-14 0 7 7 0 0 1 14 0Zm-1.5 5.5L20 20",
   },
   {
-    href: "/launchpad",
-    label: "Queue",
-    path: "M5 4h14v16l-7-4-7 4z",
+    href: "/heatcheck",
+    label: "HeatCheck",
+    // A flame: the posts that are burning right now.
+    path: "M12 3c.6 3-1.2 4.2-2.6 5.6A5.8 5.8 0 0 0 7.5 13a4.5 4.5 0 0 0 9 0c0-1.7-.8-2.9-1.7-3.9-.6 1-1.3 1.4-2 1.6.6-2.4.3-5.4-.8-7.7Z",
   },
   {
     href: "/settings",
