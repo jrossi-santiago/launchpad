@@ -25,6 +25,76 @@ export function buildDefaultRadarQuery(brandPack: BrandPackRow): string {
   return words.join(" ").replace(/[.,;:!?]+$/, "");
 }
 
+// Words that carry no search weight. Kept deliberately small: this list
+// only has to stop a chip reading "who are" — an aggressive stoplist would
+// eat the domain nouns that make a query worth running.
+const CHIP_STOPWORDS = new Set([
+  "a", "an", "and", "are", "as", "at", "be", "been", "but", "by", "can",
+  "for", "from", "has", "have", "how", "in", "is", "it", "its", "of", "on",
+  "or", "our", "that", "the", "their", "them", "they", "this", "to", "up",
+  "was", "we", "who", "whose", "will", "with", "you", "your",
+]);
+
+const CHIP_WORDS = 4;
+export const MAX_EXPLORE_CHIPS = 6;
+
+export type ExploreQuery = {
+  // What the chip says. Short enough to sit in a scrolling row on a phone.
+  label: string;
+  // What actually goes to GetXAPI, before buildSearchQuery() adds the
+  // min_faves and since_time operators.
+  query: string;
+};
+
+// One line of the brand pack in, one searchable phrase out: punctuation
+// dropped, stopwords dropped, the first few content words kept in the
+// order they were written. Returns "" when nothing usable survives, which
+// the caller treats as "no chip for this line".
+function toChipQuery(line: string): string {
+  return line
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .filter((word) => word.length > 1 && !CHIP_STOPWORDS.has(word))
+    .slice(0, CHIP_WORDS)
+    .join(" ")
+    .trim();
+}
+
+// The Explore tab opens on results, not on an empty search box, so the
+// queries have to come from somewhere the user has already filled in: the
+// brand pack. One chip per ICP bullet, plus the positioning line, deduped
+// and capped.
+//
+// This is deliberately string work rather than a model call — it costs
+// nothing, it is the same every time, and it needs no migration. If these
+// chips turn out to be weak in practice, generating better ones at
+// brand-pack save time and storing them is a change to this function's
+// caller, not to anything downstream of it.
+export function buildExploreQueries(brandPack: BrandPackRow): ExploreQuery[] {
+  const lines = [
+    ...(brandPack.icp ?? "").split("\n"),
+    brandPack.business_summary ?? "",
+  ];
+
+  const chips: ExploreQuery[] = [];
+  const seen = new Set<string>();
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    const query = toChipQuery(trimmed);
+    if (!query || seen.has(query)) continue;
+    seen.add(query);
+
+    chips.push({ label: query, query });
+    if (chips.length === MAX_EXPLORE_CHIPS) break;
+  }
+
+  return chips;
+}
+
 // Appends "min_faves:<n>" and a since_time:<unix seconds> operator to
 // params.query. This exact operator syntax is part of the unverified
 // GetXAPI advanced-search contract (see AGENTS.md caveat) — confirm against

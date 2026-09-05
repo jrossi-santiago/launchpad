@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { LogoutButton } from "@/components/LogoutButton";
@@ -15,6 +16,21 @@ function readParam(
   if (typeof value === "string" && value) return value;
   return null;
 }
+
+const MOBILE_LINKS = [
+  {
+    href: "/network",
+    label: "Network",
+    description: "Watched accounts, one card stack each",
+  },
+  {
+    href: "/radar",
+    label: "Radar",
+    description: "Search X with your own query and filters",
+  },
+  { href: "/leads", label: "Leads", description: "People pulled from an audience" },
+  { href: "/home", label: "Brand pack", description: "Voice, ICP and reply templates" },
+] as const;
 
 export default async function SettingsPage({
   searchParams,
@@ -71,6 +87,31 @@ export default async function SettingsPage({
           </span>
         </div>
       </div>
+
+      {/* The tab bar holds four destinations; everything else it doesn't
+          have room for is reachable from here. Hidden on desktop, where
+          the sidebar already lists all of it. */}
+      <nav className="mt-6 flex flex-col divide-y divide-zinc-200 overflow-hidden rounded-xl border border-zinc-200 bg-white md:hidden dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-900">
+        {MOBILE_LINKS.map((link) => (
+          <Link
+            key={link.href}
+            href={link.href}
+            className="flex min-h-14 items-center justify-between gap-3 px-5 py-3"
+          >
+            <span className="flex flex-col">
+              <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+                {link.label}
+              </span>
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                {link.description}
+              </span>
+            </span>
+            <span aria-hidden className="text-zinc-400">
+              ›
+            </span>
+          </Link>
+        ))}
+      </nav>
 
       <XConnectionForm
         initial={{

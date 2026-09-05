@@ -21,10 +21,9 @@ type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
 export const GROK_HANDLE = "@grok";
 export const GROK_VARIANT = 3;
 
-const SAVE_DRAFTS_TOOL = {
-  name: "save_drafts",
-  description:
-    "Save 2 reply drafts plus 1 question addressed to @grok for this tweet.",
+const SAVE_REPLIES_TOOL = {
+  name: "save_replies",
+  description: "Save 2 reply drafts for this tweet.",
   input_schema: {
     type: "object",
     properties: {
@@ -36,6 +35,17 @@ const SAVE_DRAFTS_TOOL = {
         description:
           "2 distinct reply drafts in the founder's voice, each under 280 characters.",
       },
+    },
+    required: ["replies"],
+  },
+} as const;
+
+const SAVE_GROK_TOOL = {
+  name: "save_grok_question",
+  description: "Save 1 question addressed to @grok about this tweet.",
+  input_schema: {
+    type: "object",
+    properties: {
       grok_question: {
         type: "string",
         maxLength: 280,
@@ -43,35 +53,83 @@ const SAVE_DRAFTS_TOOL = {
           "A reply that tags @grok and asks it one genuine question about the tweet's subject. Under 280 characters including the @grok tag.",
       },
     },
-    required: ["replies", "grok_question"],
+    required: ["grok_question"],
   },
 } as const;
 
-const SYSTEM_PROMPT = [
+// Two prompts, because they need two different things in front of them.
+//
+// The replies are ordinary replies, and the Feed learned the hard way
+// what happens when the founder's positioning and ICP are in context for
+// one of those: the model treats them as the job and every draft comes
+// out with a slant. So the replies request carries the voice half of the
+// Brand Pack and nothing else — there is no territory in the request to
+// steer towards.
+//
+// The @grok question is the exception that proves it. Its whole purpose
+// is to get Grok answering publicly on the ground this founder wants to
+// be known for, so it needs the agenda and is asked for on its own.
+const REPLIES_PROMPT = [
   "You are writing X (Twitter) reply drafts for a founder, in their own voice, based on their Brand Pack.",
   "Each draft must read like something a real person would type as a quick reply — not ad copy, no hashtags unless the brand voice uses them.",
   "Every draft MUST fit X's 280-character limit including spaces and punctuation; if a draft would run long, tighten the wording rather than truncate it.",
   "",
-  "The two `replies` are ordinary replies to the tweet.",
+  "Write as someone who knows this world well and enjoys talking about it — a person joining the conversation, not an expert marking the post. Pick the bit that actually caught your eye, and bring something of your own: what happened when you tried it, the case that went differently, the thing you have wondered about since. Curiosity beats correction: if you see it differently, say so as your own read, not as a fix. A real question is a good reply when you actually want the answer.",
+  "Do not sound like a know-it-all repeating the post back. Never restate or summarise what they just said before adding your bit — start at your bit. No verdicts on the post ('great point', 'this is so true', 'exactly right', 'underrated take'). No lecturing, no opening with 'Actually', no lesson tacked on the end, no credentials. Never write a reply that would fit any other tweet.",
   "",
-  "`grok_question` is different: it is a reply that tags @grok and asks it one real question, so that Grok answers publicly in the thread.",
-  "Rules for `grok_question`:",
+  "These replies are not going anywhere. You are in the thread because the subject is interesting, and that is the entire reason — no pitch, no plug, no mention of the founder's product, and no working round to what they do for a living.",
+  "The two drafts must be genuinely different takes, not one idea worded twice.",
+].join("\n");
+
+const GROK_PROMPT = [
+  "You are writing one X (Twitter) reply for a founder, in their own voice, based on their Brand Pack.",
+  "It is a reply that tags @grok and asks it one real question, so that Grok answers publicly in the thread.",
+  "Rules:",
   "- It must start with @grok.",
   "- Ask exactly one genuine, answerable question and end it with a question mark. No rhetorical questions, no multi-part questions.",
   "- Anchor it in both the subject of the tweet and the territory the Brand Pack says this founder wants to be known for, so the answer is worth reading for their ideal customer.",
+  "- Ask it the way someone genuinely curious would — the thing you actually want to know — not the way an examiner would test whether Grok knows it.",
   "- Never ask something the tweet already answers.",
   "- No pitch, no plug, no mention of the founder's product.",
   "- Keep it short: just enough context for the question to stand on its own, then the question. Stay in the founder's voice and respect their voice guardrails.",
+  "- It MUST fit 280 characters including the @grok tag.",
 ].join("\n");
 
-export function buildDraftsRequest(
+export function buildRepliesRequest(
   brandPack: BrandPackRow,
   tweet: TweetForDrafts,
 ) {
   return {
     model: "claude-haiku-4-5-20251001",
     max_tokens: 1024,
-    system: SYSTEM_PROMPT,
+    system: REPLIES_PROMPT,
+    messages: [
+      {
+        role: "user",
+        content: JSON.stringify({
+          // Voice only. Positioning and ICP are deliberately absent —
+          // their keys too, since a model shown `icp: null` still knows
+          // an ICP is a thing it is meant to have.
+          voice_notes: brandPack.voice_notes,
+          voice_samples: brandPack.reply_templates,
+          tweet_author: tweet.author_handle,
+          tweet_text: tweet.content,
+        }),
+      },
+    ],
+    tools: [SAVE_REPLIES_TOOL],
+    tool_choice: { type: "tool", name: "save_replies" },
+  };
+}
+
+export function buildGrokRequest(
+  brandPack: BrandPackRow,
+  tweet: TweetForDrafts,
+) {
+  return {
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 1024,
+    system: GROK_PROMPT,
     messages: [
       {
         role: "user",
@@ -79,28 +137,33 @@ export function buildDraftsRequest(
           positioning: brandPack.business_summary,
           icp: brandPack.icp,
           voice_notes: brandPack.voice_notes,
-          reply_templates: brandPack.reply_templates,
           tweet_author: tweet.author_handle,
           tweet_text: tweet.content,
         }),
       },
     ],
-    tools: [SAVE_DRAFTS_TOOL],
-    tool_choice: { type: "tool", name: "save_drafts" },
+    tools: [SAVE_GROK_TOOL],
+    tool_choice: { type: "tool", name: "save_grok_question" },
   };
 }
 
-type DraftsToolInput = { replies: string[]; grok_question: string };
-
-function isDraftsToolInput(input: unknown): input is DraftsToolInput {
-  if (!input || typeof input !== "object") return false;
-  const value = input as Record<string, unknown>;
-  return (
-    Array.isArray(value.replies) &&
-    value.replies.length === 2 &&
-    value.replies.every((d) => typeof d === "string") &&
-    typeof value.grok_question === "string"
+function toolInput(data: unknown, name: string): Record<string, unknown> {
+  const content: unknown[] = Array.isArray((data as { content?: unknown })?.content)
+    ? ((data as { content: unknown[] }).content)
+    : [];
+  const toolUse = content.find(
+    (block): block is { type: "tool_use"; name: string; input: unknown } =>
+      typeof block === "object" &&
+      block !== null &&
+      (block as { type?: unknown }).type === "tool_use" &&
+      (block as { name?: unknown }).name === name,
   );
+
+  if (!toolUse || !toolUse.input || typeof toolUse.input !== "object") {
+    throw new Error(`Anthropic response did not include a valid ${name} tool call.`);
+  }
+
+  return toolUse.input as Record<string, unknown>;
 }
 
 export function isValidGrokQuestion(text: string): boolean {
@@ -113,7 +176,7 @@ export function isValidGrokQuestion(text: string): boolean {
   );
 }
 
-async function requestDrafts(body: unknown): Promise<DraftsToolInput> {
+async function post(body: unknown): Promise<unknown> {
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -131,53 +194,72 @@ async function requestDrafts(body: unknown): Promise<DraftsToolInput> {
     );
   }
 
-  const data = await response.json();
-  const content: unknown[] = Array.isArray(data?.content) ? data.content : [];
-  const toolUse = content.find(
-    (block): block is { type: "tool_use"; name: string; input: unknown } =>
-      typeof block === "object" &&
-      block !== null &&
-      (block as { type?: unknown }).type === "tool_use" &&
-      (block as { name?: unknown }).name === "save_drafts",
-  );
-
-  if (!toolUse || !isDraftsToolInput(toolUse.input)) {
-    throw new Error(
-      "Anthropic response did not include a valid save_drafts tool call.",
-    );
-  }
-
-  return toolUse.input;
+  return response.json();
 }
 
+async function requestReplies(brandPack: BrandPackRow, tweet: TweetForDrafts) {
+  const input = toolInput(
+    await post(buildRepliesRequest(brandPack, tweet)),
+    "save_replies",
+  );
+  const replies = input.replies;
+  if (
+    !Array.isArray(replies) ||
+    replies.length !== 2 ||
+    !replies.every((reply) => typeof reply === "string")
+  ) {
+    throw new Error("Anthropic response did not include two usable replies.");
+  }
+  return replies as string[];
+}
+
+async function requestGrok(
+  brandPack: BrandPackRow,
+  tweet: TweetForDrafts,
+): Promise<string> {
+  const request = buildGrokRequest(brandPack, tweet);
+  const first = toolInput(await post(request), "save_grok_question");
+  const question =
+    typeof first.grok_question === "string" ? first.grok_question : "";
+
+  if (isValidGrokQuestion(question)) return question.trim();
+
+  // One corrective retry rather than shipping a question Grok will never
+  // answer. Only this half is retried — the replies are judged on nothing
+  // a regex can check.
+  const second = toolInput(
+    await post({
+      ...request,
+      messages: [
+        ...request.messages,
+        { role: "assistant", content: `Previous grok_question: ${question}` },
+        {
+          role: "user",
+          content:
+            "That grok_question was not usable. Rewrite it. It MUST start with @grok, must end with a question mark, must ask exactly one genuine question, and must be 280 characters or fewer.",
+        },
+      ],
+    }),
+    "save_grok_question",
+  );
+
+  return typeof second.grok_question === "string"
+    ? second.grok_question.trim()
+    : question.trim();
+}
+
+// The two calls run together: they need different context, not different
+// timing, and one round trip of latency is what the sheet can afford.
 export async function callHaiku(
   brandPack: BrandPackRow,
   tweet: TweetForDrafts,
 ): Promise<string[]> {
-  const request = buildDraftsRequest(brandPack, tweet);
-  let result = await requestDrafts(request);
+  const [replies, grokQuestion] = await Promise.all([
+    requestReplies(brandPack, tweet),
+    requestGrok(brandPack, tweet),
+  ]);
 
-  if (!isValidGrokQuestion(result.grok_question)) {
-    // One corrective retry rather than shipping a third option that Grok
-    // will never answer.
-    result = await requestDrafts({
-      ...request,
-      messages: [
-        ...request.messages,
-        {
-          role: "assistant",
-          content: `Previous grok_question: ${result.grok_question}`,
-        },
-        {
-          role: "user",
-          content:
-            "That grok_question was not usable. Rewrite all three drafts. The grok_question MUST start with @grok, must end with a question mark, must ask exactly one genuine question, and must be 280 characters or fewer.",
-        },
-      ],
-    });
-  }
-
-  return [...result.replies, result.grok_question.trim()];
+  return [...replies, grokQuestion];
 }
 
 export function buildMockDrafts(
