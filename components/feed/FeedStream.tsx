@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { TypeChip } from "@/components/comment/TypeChip";
 import { CtaToggle } from "@/components/comment/CtaToggle";
 import { isFreshReply, newestSweepId, type FeedCard } from "@/lib/network/stack";
 import { copyAndOpenReply, withCta } from "@/lib/x/intent";
@@ -301,6 +302,7 @@ export function FeedStream({
       // so the sheet is never emptier than the card behind it.
       suggestion: card.suggested_reply,
       suggestionCta: card.suggested_cta,
+      suggestionType: card.reply_type,
     });
     setDrafts([]);
     setDraftsState("idle");
@@ -345,12 +347,14 @@ export function FeedStream({
         id: string;
         draft_text: string | null;
         draft_cta: string | null;
+        draft_type: string | null;
       }[])
         .filter((draft) => Boolean(draft.draft_text))
         .map((draft) => ({
           id: draft.id,
           text: draft.draft_text as string,
           cta: draft.draft_cta ?? null,
+          type: draft.draft_type ?? null,
         }));
 
       setDrafts(written);
@@ -557,17 +561,22 @@ export function FeedStream({
                           "border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60"
                     }`}
                   >
-                    <span
-                      className={`text-[10px] font-medium tracking-wider uppercase ${
-                        isFreshReply(card, currentSweep)
-                          ? "text-emerald-700 dark:text-emerald-300"
-                          : "text-zinc-400 dark:text-zinc-500"
-                      }`}
-                    >
-                      {isFreshReply(card, currentSweep)
-                        ? "Written for this post"
-                        : `Old · written ${formatAge(card.suggested_reply_at)} ago`}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`text-[10px] font-medium tracking-wider uppercase ${
+                          isFreshReply(card, currentSweep)
+                            ? "text-emerald-700 dark:text-emerald-300"
+                            : "text-zinc-400 dark:text-zinc-500"
+                        }`}
+                      >
+                        {isFreshReply(card, currentSweep)
+                          ? "Written for this post"
+                          : `Old · written ${formatAge(card.suggested_reply_at)} ago`}
+                      </span>
+                      {/* Which of the four shapes this reply is. Absent on
+                          replies written before the types existed. */}
+                      <TypeChip type={card.reply_type} />
+                    </div>
                     <p
                       className={`text-sm leading-relaxed whitespace-pre-wrap ${
                         isFreshReply(card, currentSweep)

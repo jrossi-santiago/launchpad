@@ -9,6 +9,13 @@ import {
   isSubstantivePoint,
   isUsableComment,
 } from "@/lib/anthropic/comment";
+import {
+  COMMENT_TYPE_FIELD,
+  COMMENT_TYPE_RULES,
+  isCommentType,
+  violatesTypeRule,
+  type CommentType,
+} from "@/lib/anthropic/commentTypes";
 import type { PostContext, QuotedPost } from "@/lib/getx/userTweets";
 
 // One reply, written for one post, for the Feed's Reload button.
@@ -64,6 +71,11 @@ function saveReplyTool(onTerritory: boolean) {
           description:
             "True only if you could reply as someone who genuinely follows this, without guessing at anything in `unclear`. False if a reply would require pretending to know what this is about.",
         },
+        comment_type: {
+          ...COMMENT_TYPE_FIELD,
+          description:
+            `Which of the four kinds of reply this is, chosen before you write it. When can_reply is false, answer "question"; it is ignored. ${COMMENT_TYPE_FIELD.description}`,
+        },
         point: POINT_FIELD,
         reply: {
           type: "string",
@@ -76,6 +88,7 @@ function saveReplyTool(onTerritory: boolean) {
         "about",
         "unclear",
         "can_reply",
+        "comment_type",
         "point",
         "reply",
         ...(onTerritory ? ["cta"] : []),
@@ -150,6 +163,9 @@ const SYSTEM_PROMPT = [
   "It must read like a person typing a quick reply on their phone, and it is fine if it does not wrap up neatly. Lowercase is fine if the voice notes suggest it.",
   ...BREVITY_RULES,
   "The founder's voice guardrails ('never say') override everything above.",
+  "",
+  "A reply worth leaving is one of exactly four kinds, and `comment_type` names which before you write it:",
+  ...COMMENT_TYPE_RULES,
   "",
   "Name what your reply adds in `point` before you write it — the result you got, the case that went the other way, the detail people miss, the thing you actually want to know. A reply whose only point is that the post is right is not a reply; say what you would want to know instead.",
   "",
@@ -263,6 +279,9 @@ export function buildFeedReplyRequest(
 // comprehension problem from a context problem.
 export type FeedReplyResult = {
   reply: string | null;
+  // Which of the four kinds of comment this is. Null on a decline, where
+  // there is no reply for it to describe.
+  commentType: CommentType | null;
   about: string;
   unclear: string | null;
   // The ask, written apart from the reply and only ever on an
@@ -274,6 +293,7 @@ type ReplyToolInput = {
   about: string;
   unclear: string;
   can_reply: boolean;
+  comment_type: CommentType;
   point: string;
   reply: string;
   cta?: string;
@@ -286,6 +306,7 @@ function isReplyToolInput(input: unknown): input is ReplyToolInput {
     typeof value.about === "string" &&
     typeof value.unclear === "string" &&
     typeof value.can_reply === "boolean" &&
+    isCommentType(value.comment_type) &&
     typeof value.point === "string" &&
     typeof value.reply === "string"
   );
@@ -296,7 +317,15 @@ function isReplyToolInput(input: unknown): input is ReplyToolInput {
 // because the budget is what keeps replies to one point and leaves room
 // for a CTA under them. Anything else earns the one corrective retry.
 function isUsableReply(input: ReplyToolInput): boolean {
-  return isUsableComment(input.reply);
+  return isUsableComment(input.reply) && !typeFailure(input);
+}
+
+// The reply has to have the shape of the type it just claimed. Returns
+// the sentence the retry is given, so the model is told which shape it
+// promised and did not deliver rather than "that did not work".
+function typeFailure(input: ReplyToolInput): string | null {
+  if (!input.can_reply) return null;
+  return violatesTypeRule(input.comment_type, input.reply);
 }
 
 // An `about` that describes the post's shape rather than its subject — "a
@@ -375,12 +404,12 @@ export async function callHaikuFeedReply(
         ...request.messages,
         {
           role: "assistant",
-          content: `Previous about: ${result.about}\nPrevious point: ${result.point}\nPrevious reply: ${result.reply}`,
+          content: `Previous about: ${result.about}\nPrevious comment_type: ${result.comment_type}\nPrevious point: ${result.point}\nPrevious reply: ${result.reply}`,
         },
         {
           role: "user",
           content:
-            `That did not work. In \`about\`, name the specific thing this post is about — the tool, claim, event or argument — not the kind of post it is. In \`point\`, name the one thing your reply adds that the post does not already say. Then write that reply, ${COMMENT_MAX} characters or fewer. If you genuinely cannot tell what the post is about, set can_reply to false and leave the reply empty; that is a fine answer.`,
+            `${typeFailure(result) ?? "That did not work."} In \`about\`, name the specific thing this post is about — the tool, claim, event or argument — not the kind of post it is. In \`point\`, name the one thing your reply adds that the post does not already say. Then write that reply, ${COMMENT_MAX} characters or fewer. If you genuinely cannot tell what the post is about, set can_reply to false and leave the reply empty; that is a fine answer.`,
         },
       ],
     });
@@ -390,11 +419,12 @@ export async function callHaikuFeedReply(
   const unclear = result.unclear.trim() || null;
 
   if (!result.can_reply || !isUsableReply(result)) {
-    return { reply: null, about, unclear, cta: null };
+    return { reply: null, commentType: null, about, unclear, cta: null };
   }
 
   return {
     reply: result.reply.trim(),
+    commentType: result.comment_type,
     about,
     unclear,
     // Absent from the tool off territory, so this is null for almost
@@ -406,6 +436,7 @@ export async function callHaikuFeedReply(
 export function buildMockFeedReply(target: ReplyTarget): FeedReplyResult {
   const snippet = (target.content ?? "").trim().slice(0, 80);
   return {
+    commentType: "question",
     reply: `[Mock reply to @${target.handle}] re: "${snippet}" — set ANTHROPIC_API_KEY to have Haiku read this post and write a real reply.`,
     about: `A mock reading of @${target.handle}'s post, produced without a model.`,
     unclear: null,

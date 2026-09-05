@@ -9,6 +9,13 @@ import {
   cleanCta,
   isUsableComment,
 } from "@/lib/anthropic/comment";
+import {
+  COMMENT_TYPE_FIELD,
+  COMMENT_TYPE_RULES,
+  isCommentType,
+  violatesTypeRule,
+  type CommentType,
+} from "@/lib/anthropic/commentTypes";
 
 export type TweetForDrafts = {
   author_handle: string | null;
@@ -25,6 +32,10 @@ export type DraftRow = {
   // and stored as its own column. Null on the @grok draft always, and on
   // a reply draft with nothing honest to offer.
   draft_cta: string | null;
+  // Which of the four comment types this draft is. Null on the @grok
+  // draft, which is its own shape, and on drafts written before the types
+  // existed.
+  draft_type: CommentType | null;
   status: string;
   created_at: string;
 };
@@ -34,6 +45,7 @@ export type DraftRow = {
 export type WrittenDraft = {
   text: string;
   cta: string | null;
+  type: CommentType | null;
 };
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
@@ -52,6 +64,7 @@ const SAVE_REPLIES_TOOL = {
         items: {
           type: "object",
           properties: {
+            comment_type: COMMENT_TYPE_FIELD,
             point: POINT_FIELD,
             reply: {
               type: "string",
@@ -60,12 +73,12 @@ const SAVE_REPLIES_TOOL = {
             },
             cta: CTA_FIELD,
           },
-          required: ["point", "reply", "cta"],
+          required: ["comment_type", "reply", "cta", "point"],
         },
         minItems: 2,
         maxItems: 2,
         description:
-          "2 distinct reply drafts in the founder's voice, each naming its own point first.",
+          "2 distinct reply drafts in the founder's voice, each naming its comment_type and its point before the reply. The two must be different comment types — that is what makes them a real choice rather than one idea worded twice.",
       },
     },
     required: ["replies"],
@@ -105,6 +118,11 @@ const REPLIES_PROMPT = [
   "You are writing X (Twitter) reply drafts for a founder, in their own voice, based on their Brand Pack.",
   "Each draft must read like something a real person would type as a quick reply — not ad copy, no hashtags unless the brand voice uses them.",
   ...BREVITY_RULES,
+  "",
+  "Each draft is one of exactly four kinds of comment, named in `comment_type` before it is written:",
+  ...COMMENT_TYPE_RULES,
+  "The two drafts must be two different types. They are the choice the founder is making, so giving them the same shape twice wastes one of them — write the best type this post can carry, then the best of the remaining three.",
+  "",
   "Each draft names its own `point` before it is written, and the two points must be different things — that is what makes the drafts genuinely different rather than one idea worded twice.",
   "",
   "Write as someone who knows this world well and enjoys talking about it — a person joining the conversation, not an expert marking the post. Pick the bit that actually caught your eye, and bring something of your own: what happened when you tried it, the case that went differently, the thing you have wondered about since. Curiosity beats correction: if you see it differently, say so as your own read, not as a fix. A real question is a good reply when you actually want the answer.",
@@ -246,7 +264,17 @@ function toWrittenDraft(value: unknown): WrittenDraft | null {
   if (!value || typeof value !== "object") return null;
   const row = value as Record<string, unknown>;
   if (typeof row.reply !== "string" || !isUsableComment(row.reply)) return null;
-  return { text: row.reply.trim(), cta: cleanCta(row.cta) };
+  // A draft whose text does not have the shape of the type it claims is
+  // rejected here rather than shown: the type is on the card, and a
+  // receipts story with nothing that happened in it is worse than no
+  // draft, because it is a label saying the check was done.
+  if (!isCommentType(row.comment_type)) return null;
+  if (violatesTypeRule(row.comment_type, row.reply)) return null;
+  return {
+    text: row.reply.trim(),
+    cta: cleanCta(row.cta),
+    type: row.comment_type,
+  };
 }
 
 function parseReplies(input: Record<string, unknown>): WrittenDraft[] | null {
@@ -258,7 +286,12 @@ function parseReplies(input: Record<string, unknown>): WrittenDraft[] | null {
     return null;
   }
 
-  return replies as WrittenDraft[];
+  const [first, second] = replies as WrittenDraft[];
+  // Two drafts of the same type are one draft offered twice. The point of
+  // the pair is a choice between shapes.
+  if (first.type === second.type) return null;
+
+  return [first, second];
 }
 
 // The replies half now has something a regex can check — the length
@@ -287,7 +320,7 @@ async function requestReplies(
           },
           {
             role: "user",
-            content: `Write the two drafts again. Each one: \`point\` naming the single thing it adds that the tweet does not already say, then a reply of ${COMMENT_MAX} characters or fewer built from that point, then a \`cta\` (empty string if there is nothing concrete to offer).`,
+            content: `Write the two drafts again. Each one: a \`comment_type\` you can honestly fill — an operator add-on carries a real number, a receipts story is something that happened to you and carries a figure, a counterpoint grants the scope the post holds in before naming the one it does not, a sharp question ends in a question mark and names what it is asking about — then \`point\`, naming the single thing it adds that the tweet does not already say, then a reply of ${COMMENT_MAX} characters or fewer built from that point, then a \`cta\` (empty string if there is nothing concrete to offer). The two drafts must be different comment types, and neither may open by grading the post.`,
           },
         ],
       }),
@@ -350,7 +383,10 @@ export async function callHaiku(
 
   // The @grok draft never carries a CTA. Its whole purpose is a public
   // answer in the thread, and an ask stapled underneath reads as bait.
-  return [...replies, { text: grokQuestion, cta: null }];
+  // It is not one of the four types either — tagging Grok is its own
+  // shape, and forcing it into "sharp question" would put a label on the
+  // card that the rules never checked.
+  return [...replies, { text: grokQuestion, cta: null, type: null }];
 }
 
 export function buildMockDrafts(
@@ -364,14 +400,17 @@ export function buildMockDrafts(
     {
       text: `[Mock draft 1] Replying to ${author} — set ANTHROPIC_API_KEY for real drafts.`,
       cta: "Want the mock process? Reply and I'll send it.",
+      type: "operator",
     },
     {
       text: `[Mock draft 2] re: "${snippet}" — placeholder until ANTHROPIC_API_KEY is set.`,
       cta: null,
+      type: "question",
     },
     {
       text: `${GROK_HANDLE} [Mock draft 3] what's the strongest evidence either way here?`,
       cta: null,
+      type: null,
     },
   ];
 }
@@ -391,6 +430,7 @@ export async function insertDrafts(
         variant: i + 1,
         draft_text: draft.text,
         draft_cta: draft.cta,
+        draft_type: draft.type,
         status: "draft",
       })),
     )

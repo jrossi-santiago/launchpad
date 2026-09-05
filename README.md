@@ -187,6 +187,56 @@ there is no callback from the composer — so returning to the tab asks
 template has no `drafts` row behind it, which is exactly the trade for
 it being instant.
 
+### The four comment types
+
+Every comment the app writes is one of exactly four shapes, defined once
+in `lib/anthropic/commentTypes.ts` and used by all three generators —
+HeatCheck, Feed Reload, and the queue's drafts:
+
+| Type | When it is the right pick | What the text must contain |
+| --- | --- | --- |
+| **Operator add-on** | You have done the thing the post is about and know what happened | A real figure — the percentage, count, price or duration |
+| **Receipts story** | You lived it, and the useful part is what happened rather than a rule | First person (or an implied subject: "Priced it at $9…"), plus a figure |
+| **Respectful counterpoint** | The post is right in its scope and wrong just outside it | The turn: a contrast word, or granting the scope first ("true for B2C. In B2B…") |
+| **Sharp question** | Nothing first-hand to add, but something specific you want to know | A question mark, and a question that names what it is asking about |
+
+Three things make this a rule rather than advice:
+
+- **The type is chosen before the comment is written.** It is a tool field
+  placed ahead of `point` and the comment itself, and tool arguments come
+  back in schema order — the same mechanism `point` already ran on. A type
+  picked afterwards would be a label, not a decision.
+- **The text is checked against the shape it promised.**
+  `violatesTypeRule()` is the enforcement: an operator add-on with no
+  number, a receipts story that happened to nobody, a counterpoint that
+  never turns, a question that asks nothing. It returns the *reason*, and
+  the reason is what the corrective retry is given — "that did not work"
+  makes a model guess; "an operator add-on needs the figure" makes it fix
+  the thing that is wrong.
+- **There is no fifth type.** The comment the whole feature exists to
+  prevent — agreeing at length — is not one of the four, and there is
+  nowhere to escape to. Sharp question is the floor, since there is always
+  something you genuinely want to know.
+
+Ranked, too: `operator` beats `receipts` when both are honestly available,
+and either beats `counterpoint` or `question`. The rules say to take the
+first that is true, and never to pick a shape you cannot fill — an invented
+number is worse than a smaller comment.
+
+Separately and regardless of type, a comment may not **open** with a
+verdict on the post ("great post", "so true", "congrats", "this."). That
+list is `BANNED_OPENERS` in `lib/anthropic/comment.ts` and is checked by
+`isUsableComment()`, so it applies everywhere a comment is written. It is
+anchored to the start because the first line is the only one that shows in
+a notification.
+
+The chosen type is stored (`network_tweets.reply_type`, `drafts.draft_type`)
+and shown on the card, so a receipts story with no story in it is visible
+before it goes out — and so "which type actually earns replies" is a
+question the data can answer later. The `@grok` draft carries no type: it
+is its own shape, and labelling it as one of the four would put a badge on
+a card that the rules never checked.
+
 ### Comment length, and the CTA
 
 Every comment the app writes — HeatCheck's, Feed Reload's, and the queue's

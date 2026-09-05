@@ -1,3 +1,7 @@
+import {
+  isCommentType,
+  type CommentType,
+} from "@/lib/anthropic/commentTypes";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { NetworkTweet, PostContext, QuotedPost } from "@/lib/getx/userTweets";
 import type { TweetMetrics } from "@/lib/getx/tweet";
@@ -88,6 +92,10 @@ export type NetworkCard = {
   // every card whose post was not about the founder's own field, which is
   // most of them.
   suggested_cta: string | null;
+  // Which of the four comment types the reply is — an operator add-on, a
+  // receipts story, a counterpoint or a sharp question. The card says so,
+  // because the type is the reason the reply is shaped the way it is.
+  reply_type: CommentType | null;
   // What the model made of the post, and what it could not tell from what
   // it was given. reply_unclear with no reply is a decline.
   reply_about: string | null;
@@ -205,7 +213,7 @@ export async function loadStacks(
   const { data: tweets, error: tweetsError } = await supabase
     .from("network_tweets")
     .select(
-      "id, profile_id, x_tweet_id, content, url, metrics, engagement_score, posted_at, created_at, source, quoted, context, suggested_reply, suggested_reply_at, suggested_cta, reply_about, reply_unclear, reply_sweep_id",
+      "id, profile_id, x_tweet_id, content, url, metrics, engagement_score, posted_at, created_at, source, quoted, context, suggested_reply, suggested_reply_at, suggested_cta, reply_type, reply_about, reply_unclear, reply_sweep_id",
     )
     .eq("user_id", userId)
     .eq("state", "new");
@@ -235,6 +243,7 @@ export async function loadStacks(
         typeof row.suggested_reply_at === "string" ? row.suggested_reply_at : null,
       suggested_cta:
         typeof row.suggested_cta === "string" ? row.suggested_cta : null,
+      reply_type: isCommentType(row.reply_type) ? row.reply_type : null,
       reply_about: typeof row.reply_about === "string" ? row.reply_about : null,
       reply_unclear:
         typeof row.reply_unclear === "string" ? row.reply_unclear : null,

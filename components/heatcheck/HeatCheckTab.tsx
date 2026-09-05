@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { TypeChip } from "@/components/comment/TypeChip";
 import { CtaToggle } from "@/components/comment/CtaToggle";
 import { withCta } from "@/lib/x/intent";
 import type { HeatCheckCard, HeatCheckKind } from "@/lib/anthropic/heatcheck";
@@ -284,6 +285,9 @@ export function HeatCheckTab({
                 >
                   {KIND_LABEL[card.read.kind]}
                 </span>
+                {/* Which of the four a value comment is. grok and pitch
+                    are their own shapes and carry no type. */}
+                <TypeChip type={card.read.commentType} />
                 {card.url ? (
                   <a
                     href={card.url}

@@ -67,9 +67,30 @@ export function isSubstantivePoint(point: string): boolean {
   return point.trim().split(/\s+/).length >= 4;
 }
 
+// The comments the system doc kills by name: the ones that are socially
+// and algorithmically invisible. Every prompt in the app already bans
+// them in prose, and prose is a request — this is the check that makes it
+// a rule, because the failure is not subtle enough to need judgement.
+//
+// Anchored to the start, because that is where the damage is: the first
+// line is the only one that shows in a notification, and a comment that
+// spends it grading the post has spent all of it. "Congrats on the raise,
+// but the pricing bit is what got me" is caught for exactly that reason —
+// the good half is the second clause, and it should have been first. The
+// same words further in are ordinary English and are left alone.
+const BANNED_OPENERS =
+  /^\s*(great post|great point|so true|this\.|this!|this is so true|this is gold|love this|well said|spot on|100%|facts|agreed|couldn'?t agree more|exactly this|exactly right|underrated take|congrats|congratulations|amazing|incredible|beautifully said|nailed it|thanks for sharing)\b/i;
+
+export function hasBannedOpener(text: string): boolean {
+  return BANNED_OPENERS.test(text);
+}
+
+// Usable means postable: present, inside the budget, and not opening with
+// a verdict on the post.
 export function isUsableComment(text: string): boolean {
   const trimmed = text.trim();
-  return trimmed.length > 0 && trimmed.length <= COMMENT_MAX;
+  if (trimmed.length === 0 || trimmed.length > COMMENT_MAX) return false;
+  return !hasBannedOpener(trimmed);
 }
 
 // Anything unusable comes back as null rather than as a shorter CTA: a
