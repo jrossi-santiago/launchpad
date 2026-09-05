@@ -151,6 +151,10 @@ export function FeedStream({
   // this is cleared with them rather than left pointing at old asks.
   const [ctaOn, setCtaOn] = useState<Set<string>>(new Set());
   const [pull, setPull] = useState(0);
+  // Mark all done asks first. Every card it clears is gone for good, and
+  // that is one press too many to make on the way past the button.
+  const [confirmingClear, setConfirmingClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   const [target, setTarget] = useState<QuickTarget | null>(null);
   // The write-one panel, and the card it belongs to. Both live here
@@ -323,6 +327,45 @@ export function FeedStream({
     }
 
     setFeed((prev) => prev.filter((item) => item.id !== card.id));
+  }
+
+  // Clear the whole stream in one press. Same write as Done, once per
+  // card: what is on screen goes, and the next Reload — in an hour, or
+  // tomorrow — starts on an empty Feed with only what has arrived since.
+  //
+  // Nothing is hidden until the write comes back, because there is no
+  // single card to put back if it fails; a Feed that emptied and then
+  // refilled would read as a bug.
+  async function handleClearAll() {
+    if (clearing || busy || refreshing) return;
+    const cardIds = feed
+      .filter((card) => cardStates[card.id] !== "gone")
+      .map((card) => card.id);
+    if (cardIds.length === 0) return;
+
+    setClearing(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/network/skip-all", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ card_ids: cardIds }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.error ?? "Failed to clear your Feed.");
+
+      const cleared = new Set(cardIds);
+      setFeed((prev) => prev.filter((item) => !cleared.has(item.id)));
+      setSentSuggestion(null);
+      setReloadNote(null);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Couldn't clear your Feed. It's all still here.",
+      );
+    } finally {
+      setClearing(false);
+    }
   }
 
   async function handleLike(card: FeedCard) {
@@ -536,11 +579,50 @@ export function FeedStream({
             its left, because it is the rarer of the two — you press it
             when you have read the replies and want a different set, not
             on the way in. */}
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          {/* Clear the lot and come back later. It sits with Re-Write and
+              Refresh because it belongs to the same job — deciding what
+              this whole stream is, rather than what one card is — and it
+              asks before it fires, because every card it takes is gone
+              for good. */}
+          {confirmingClear && visible.length > 0 ? (
+            <div className="flex items-center gap-1 rounded-full border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700">
+              <span className="px-1 text-zinc-600 dark:text-zinc-400">
+                Clear all {visible.length}?
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmingClear(false);
+                  void handleClearAll();
+                }}
+                className="rounded-full bg-zinc-900 px-3 py-1 font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+              >
+                Yes, mark done
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmingClear(false)}
+                className="rounded-full px-2 py-1 font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmingClear(true)}
+              disabled={Boolean(busy) || refreshing || clearing || visible.length === 0}
+              title="Mark every post in your Feed done and clear the stream"
+              className="min-h-11 shrink-0 rounded-full border border-zinc-300 px-3 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+            >
+              {clearing ? "Clearing…" : "Mark all done"}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => void runReload("rewrite")}
-            disabled={Boolean(busy) || refreshing || visible.length === 0}
+            disabled={Boolean(busy) || refreshing || clearing || visible.length === 0}
             title="Write a fresh reply for every post in your Feed"
             className="min-h-11 shrink-0 rounded-full border border-zinc-300 px-3 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
           >
@@ -549,7 +631,7 @@ export function FeedStream({
           <button
             type="button"
             onClick={handleRefreshClick}
-            disabled={refreshing || Boolean(busy)}
+            disabled={refreshing || Boolean(busy) || clearing}
             className="min-h-11 shrink-0 rounded-full border border-zinc-300 px-4 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
           >
             {refreshing ? "Refreshing…" : "Refresh"}
