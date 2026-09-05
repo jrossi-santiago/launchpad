@@ -16,6 +16,10 @@ const PULL_THRESHOLD = 70;
 
 type CardState = "live" | "liking" | "liked" | "gone";
 
+// Reload writes replies for posts that have none; Re-Write throws out
+// what is there and writes the lot again.
+type ReloadMode = "reload" | "rewrite";
+
 // What one Reload did, as the route reports it.
 type ReloadSummary = {
   considered: number;
@@ -25,23 +29,32 @@ type ReloadSummary = {
   budgetReached: boolean;
 };
 
-// Reload is the only thing on this page that can take a minute, so it says
-// what it is doing rather than spinning silently.
-function describeReload(summary: ReloadSummary): string {
+// Reload and Re-Write are the only things on this page that can take a
+// minute, so they say what they did rather than spinning silently.
+function describeReload(summary: ReloadSummary, mode: ReloadMode): string {
   if (summary.considered === 0) {
-    return "Nothing new from your accounts — the Feed is up to date.";
+    return mode === "rewrite"
+      ? "Nothing in your Feed to rewrite yet."
+      : "Nothing new from your accounts — the Feed is up to date.";
   }
 
   const parts: string[] = [];
   if (summary.written > 0) {
-    parts.push(`${summary.written} ${summary.written === 1 ? "reply" : "replies"} written`);
+    const noun = summary.written === 1 ? "reply" : "replies";
+    parts.push(
+      mode === "rewrite"
+        ? `${summary.written} ${noun} rewritten`
+        : `${summary.written} ${noun} written`,
+    );
   }
   if (summary.reused > 0) parts.push(`${summary.reused} already had one`);
   if (summary.failed > 0) parts.push(`${summary.failed} couldn't be written`);
   if (parts.length === 0) return "Pulled the newest posts. Nothing needed a new reply.";
 
   const tail = summary.budgetReached
-    ? " Reload again for the rest."
+    ? mode === "rewrite"
+      ? " Re-Write again for the rest."
+      : " Reload again for the rest."
     : "";
   return `${parts.join(", ")}.${tail}`;
 }
@@ -64,7 +77,7 @@ export function FeedStream({
 }) {
   const [feed, setFeed] = useState<FeedCard[]>(initialFeed);
   const [refreshing, setRefreshing] = useState(false);
-  const [reloading, setReloading] = useState(false);
+  const [busy, setBusy] = useState<ReloadMode | null>(null);
   const [reloadNote, setReloadNote] = useState<string | null>(null);
   // The card whose written reply was last handed to X, so the button can
   // say so — the same acknowledgement the quick-comment sheet gives.
@@ -114,37 +127,51 @@ export function FeedStream({
   }, []);
 
   function handleRefreshClick() {
-    if (refreshing) return;
+    if (refreshing || busy) return;
     setRefreshing(true);
     setError(null);
     refresh(true);
   }
 
-  // Reload: poll every watched account for its newest posts and have
-  // Haiku read each one and write a reply for it. One request — the
-  // polling and the writing both happen server-side — which is why this
-  // waits rather than streaming, and why the button says how long it is
-  // going to be.
-  async function handleReloadClick() {
-    if (reloading || refreshing) return;
-    setReloading(true);
+  // Both buttons, one request. Reload polls every watched account for its
+  // newest posts and writes a reply for each; Re-Write skips the poll and
+  // rewrites the replies already in the Feed. The polling and the writing
+  // both happen server-side, which is why this waits rather than
+  // streaming, and why the button says how long it is going to be.
+  async function runReload(mode: ReloadMode) {
+    if (busy || refreshing) return;
+    setBusy(mode);
     setError(null);
     setReloadNote(null);
 
     try {
-      const response = await fetch("/api/feed/reload", { method: "POST" });
+      const response = await fetch("/api/feed/reload", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rewrite: mode === "rewrite" }),
+      });
       const body = await response.json().catch(() => null);
       if (!response.ok) {
-        throw new Error(body?.error ?? `Reload failed (${response.status}).`);
+        const label = mode === "rewrite" ? "Re-Write" : "Reload";
+        throw new Error(body?.error ?? `${label} failed (${response.status}).`);
       }
 
       setFeed((body?.feed ?? []) as FeedCard[]);
       setCardStates({});
-      if (body?.summary) setReloadNote(describeReload(body.summary as ReloadSummary));
+      setSentSuggestion(null);
+      if (body?.summary) {
+        setReloadNote(describeReload(body.summary as ReloadSummary, mode));
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to reload your Feed.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : mode === "rewrite"
+            ? "Failed to rewrite your replies."
+            : "Failed to reload your Feed.",
+      );
     } finally {
-      setReloading(false);
+      setBusy(null);
     }
   }
 
@@ -156,13 +183,13 @@ export function FeedStream({
   }
 
   function onTouchMove(event: React.TouchEvent) {
-    if (pullStart.current === null || refreshing || reloading) return;
+    if (pullStart.current === null || refreshing || busy) return;
     const distance = event.touches[0].clientY - pullStart.current;
     setPull(distance > 0 ? Math.min(distance, PULL_THRESHOLD + 20) : 0);
   }
 
   function onTouchEnd() {
-    if (pull >= PULL_THRESHOLD && !refreshing && !reloading) {
+    if (pull >= PULL_THRESHOLD && !refreshing && !busy) {
       setRefreshing(true);
       setError(null);
       refresh(true);
@@ -314,14 +341,30 @@ export function FeedStream({
             Every account you watch, newest first. Reply, like, or skip.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={handleRefreshClick}
-          disabled={refreshing || reloading}
-          className="min-h-11 shrink-0 rounded-full border border-zinc-300 px-4 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-        >
-          {refreshing ? "Refreshing…" : "Refresh"}
-        </button>
+        {/* A clean sweep, on demand: throw out every reply in the Feed
+            and write them all again. Smaller than Refresh and sitting to
+            its left, because it is the rarer of the two — you press it
+            when you have read the replies and want a different set, not
+            on the way in. */}
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void runReload("rewrite")}
+            disabled={Boolean(busy) || refreshing || visible.length === 0}
+            title="Write a fresh reply for every post in your Feed"
+            className="min-h-11 shrink-0 rounded-full border border-zinc-300 px-3 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+          >
+            {busy === "rewrite" ? "Re-writing…" : "Re-Write"}
+          </button>
+          <button
+            type="button"
+            onClick={handleRefreshClick}
+            disabled={refreshing || Boolean(busy)}
+            className="min-h-11 shrink-0 rounded-full border border-zinc-300 px-4 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
       </div>
 
       {/* The one button this page is for: the newest posts from everyone
@@ -330,17 +373,19 @@ export function FeedStream({
           press and often the only one. */}
       <button
         type="button"
-        onClick={() => void handleReloadClick()}
-        disabled={reloading || refreshing || !hasProfiles}
+        onClick={() => void runReload("reload")}
+        disabled={Boolean(busy) || refreshing || !hasProfiles}
         className="flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-zinc-900 px-5 text-base font-semibold text-white shadow-sm transition-colors hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
       >
-        {reloading ? (
+        {busy ? (
           <>
             <span
               aria-hidden
               className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
             />
-            Reading posts, writing replies…
+            {busy === "rewrite"
+              ? "Rewriting every reply…"
+              : "Reading posts, writing replies…"}
           </>
         ) : (
           <>
@@ -351,9 +396,11 @@ export function FeedStream({
       </button>
 
       <p className="-mt-2 text-center text-xs text-zinc-400 dark:text-zinc-500">
-        {reloading
-          ? "Pulling the newest posts from every account you watch. This takes a moment."
-          : "Pulls the latest posts from every account you watch and writes a reply for each one."}
+        {busy === "rewrite"
+          ? "Writing a fresh reply for every post already in your Feed. This takes a moment."
+          : busy
+            ? "Pulling the newest posts from every account you watch. This takes a moment."
+            : "Pulls the latest posts from every account you watch and writes a reply for each one."}
       </p>
 
       {reloadNote ? (
