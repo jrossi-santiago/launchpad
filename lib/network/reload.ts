@@ -16,17 +16,22 @@ import type { FeedCard, NetworkStack } from "@/lib/network/stack";
 // every watched account, take the newest few posts from each, and have
 // Haiku read each one and write a reply for it before the Feed renders.
 
-// Per account, per Reload. Five is the ask, and it is also what keeps the
-// button honest on a phone: the newest handful from each account you
-// watch, not everything they have ever posted.
-export const RELOAD_PER_PROFILE = 5;
+// Per account, per Reload — the whole of a stack, since STACK_WINDOW is
+// what a Feed holds per account in the first place. It started at five,
+// which left the older half of every stack sitting there reply-less for
+// no reason a user could see.
+export const RELOAD_PER_PROFILE = 10;
 
-// The ceiling on model calls one Reload may make. Twenty-five accounts at
-// five posts each is 125 replies, which is neither affordable nor within a
-// request timeout, so the newest posts across all accounts win and the
-// rest keep their cards without a reply. Raising this raises latency
-// linearly — the whole button is one round trip.
-export const RELOAD_REPLY_BUDGET = 20;
+// The ceiling on model calls one Reload may make, and the binding limit
+// for anyone watching more than three accounts: twenty-five accounts at
+// ten posts each is 250 replies, which is neither affordable nor within a
+// request timeout. The newest posts across all accounts win and the rest
+// keep their cards without a reply, which is what "Reload again for the
+// rest" in the summary is telling you.
+//
+// Raising it raises latency linearly — the whole button is one round trip
+// — so it moved with RELOAD_PER_PROFILE rather than in proportion to it.
+export const RELOAD_REPLY_BUDGET = 30;
 
 // Replies are written a few at a time for the same reason polls are:
 // unbounded parallelism against the API is how you get rate-limited, and

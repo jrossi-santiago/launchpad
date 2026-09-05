@@ -225,10 +225,16 @@ export function FeedStream({
     setCardStates((prev) => ({ ...prev, [cardId]: state }));
   }
 
-  async function handleSkip(card: FeedCard) {
+  // Done: dealt with, and gone for good. The row stays in the table with
+  // its state flipped rather than being deleted — that flipped state is
+  // exactly what stops the next poll from putting the post back on top.
+  //
+  // The endpoint is still /api/network/skip and the state is still
+  // "skipped", because they always meant this. Only the button lied: it
+  // said "Skip", which reads as "not now", when the row it writes has
+  // never come back.
+  async function handleDone(card: FeedCard) {
     setCardState(card.id, "gone");
-    // The row stays in the table with its state flipped — that's what
-    // stops the next poll from putting it back on top.
     const response = await fetch("/api/network/skip", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -237,7 +243,7 @@ export function FeedStream({
 
     if (!response || !response.ok) {
       setCardState(card.id, "live");
-      setError("Couldn't skip that post. It's still in your Feed.");
+      setError("Couldn't mark that done. It's still in your Feed.");
       return;
     }
 
@@ -352,7 +358,7 @@ export function FeedStream({
             Feed
           </h1>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            Every account you watch, newest first. Reply, like, or skip.
+            Every account you watch, newest first. Reply, like, or mark done.
           </p>
         </div>
         {/* A clean sweep, on demand: throw out every reply in the Feed
@@ -581,10 +587,11 @@ export function FeedStream({
                   </button>
                   <button
                     type="button"
-                    onClick={() => void handleSkip(card)}
+                    onClick={() => void handleDone(card)}
+                    title="Clear this from your Feed for good"
                     className="min-h-11 rounded-full border border-zinc-300 px-4 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
                   >
-                    Skip
+                    Done
                   </button>
                 </div>
               </article>
