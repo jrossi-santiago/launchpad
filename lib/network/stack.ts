@@ -216,12 +216,41 @@ export type FeedCard = NetworkCard & {
 };
 
 // A phone has no room for one column per account, so the Feed is the same
-// cards in one reverse-chronological stream. Derived from the stacks
-// rather than queried separately: same rows, same window, same
-// already-decided filtering, no second trip to the database.
+// cards in one stream: replies first, then chronological. Derived from
+// the stacks rather than queried separately — same rows, same window,
+// same already-decided filtering, no second trip to the database.
 //
 // The per-stack STACK_WINDOW slice still applies first, so one very
 // prolific account can contribute at most its window to the stream.
+// Cards carrying a written reply first, then everything else, each half
+// newest first.
+//
+// A reply exists because the model read the post and had something to say
+// about it, and a decline exists because it read the post and did not —
+// so "has a reply" is the closest thing the Feed has to a relevance
+// signal, and it costs nothing to sort on. Putting those at the top means
+// the work Reload just paid for is the first thing under your thumb,
+// instead of scattered through the stream by timestamp.
+//
+// Underneath, both halves stay chronological. The second half is not
+// ranked, demoted or hidden — a post with no reply is still a post you
+// might want, and the only thing being said about it is that nobody has
+// written anything for it yet.
+function byReplyThenNewest(a: NetworkCard, b: NetworkCard): number {
+  const left = a.suggested_reply ? 1 : 0;
+  const right = b.suggested_reply ? 1 : 0;
+  if (left !== right) return right - left;
+  return byNewest(a, b);
+}
+
+// The same order, applied to cards that are already flat. A sweep writes
+// replies after its stacks were loaded, so the rows it hands back are one
+// step ahead of the database it read — sorting the stale copy would put
+// the replies it just wrote in the order they were missing.
+export function sortFeed(cards: FeedCard[]): FeedCard[] {
+  return [...cards].sort(byReplyThenNewest);
+}
+
 export function flattenStacks(stacks: NetworkStack[]): FeedCard[] {
   return stacks
     .flatMap((stack) =>
@@ -232,5 +261,5 @@ export function flattenStacks(stacks: NetworkStack[]): FeedCard[] {
         display_name: stack.profile.display_name,
       })),
     )
-    .sort(byNewest);
+    .sort(byReplyThenNewest);
 }
