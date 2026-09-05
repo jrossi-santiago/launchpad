@@ -84,7 +84,7 @@ export const COMMENT_TYPES: readonly CommentTypeSpec[] = [
     blurb: "The question whose answer you actually want",
     when: "You have no first-hand result to add, but there is something specific about what they did that you genuinely want to know.",
     shape:
-      "One question, ending in a question mark, naming the specific thing being asked about — the measure, the number, the decision. Never 'thoughts?', 'curious?', 'any tips?', or a question you could answer yourself.",
+      "One question, ending in a question mark, naming the specific thing being asked about — the measure, the number, the decision. The comment ends at that question mark: nothing follows it except, at most, one thing that happened to you, in first person. Never explain why the question is a good one, and never say what 'usually' happens — that is the answer, and you are the one asking. Never 'thoughts?', 'curious?', 'any tips?', or a question you could answer yourself.",
     example:
       "How are you measuring that? We used weekly active and it lied until we switched to 'did the job they paid for in the first 48 hours'.",
   },
@@ -126,6 +126,8 @@ export const COMMENT_TYPE_RULES = [
   ),
   "Work down that list. `operator` beats `receipts` when you have both, and either beats `counterpoint` or `question`. Never pick a type whose shape you cannot actually fill: an operator add-on with no number, or a receipts story you did not live, is a lie, and the lie is worse than a smaller comment.",
   "`question` is the floor, not the escape hatch. If nothing else is honestly available you always have one real question — but it must be a specific one, and 'thoughts?' is not a comment.",
+  "A sharp question stops at the question mark. Do not add a sentence explaining why the question matters, and do not state what 'usually' or 'typically' happens — a generalisation about companies you have never seen is a guess, it answers your own question, and it hands the poster an easy 'yeah exactly' instead of the number you wanted. The one thing that may follow the question mark is something that happened to you, in first person.",
+  "If you list where a thing might have gone — channels, causes, steps — name at most two concrete ones and leave the list open: 'or somewhere else', 'or something else'. Inventing a third specific mechanism to sound informed is a guess the poster can dismiss, and a narrow list lets them answer the narrow case and skip the real one.",
   "There is no fifth type. If the only thing you can say is that the post is right, you have nothing, and agreeing at length is the comment this exists to prevent.",
   "",
   "Write the comment in the shape of the type you picked. The examples below are what each one looks like — match their shape, never their content:",
@@ -165,6 +167,16 @@ const CONTRAST =
 const SCOPE_SHIFT =
   /\b(true|works|holds|right|fine|the case|applies)\b[^.!?]{0,60}\b(for|in|with|when|at)\b/i;
 
+// A question type may carry a tail, but only a receipt — something that
+// happened to you, the way the doc's own example does: "How are you
+// measuring that? We used weekly active and it lied…". The test is
+// provenance rather than a figure, because the failure is not a missing
+// number, it is a claim about companies the model has never seen. What
+// follows the question mark otherwise is the model answering its own
+// question, and cutting it is the edit founders keep making by hand.
+const GENERALISATION =
+  /\b(usually|typically|generally|tends? to|most (people|founders|teams|companies)|everyone|always|in my experience)\b/i;
+
 // Questions that are a way of saying nothing while ending in "?".
 const EMPTY_QUESTION =
   /^(thoughts|curious|any tips|tips|how|why|what|really|is this|isn'?t it|right)\s*\??$/i;
@@ -203,6 +215,23 @@ export function violatesTypeRule(
       }
       if (EMPTY_QUESTION.test(text) || text.split(/\s+/).length < 5) {
         return "That question asks nothing. Name the specific thing you want to know — the measure, the number, the decision behind it.";
+      }
+      {
+        const tail = text.slice(text.lastIndexOf("?") + 1).trim();
+        if (tail && !FIRST_PERSON.test(tail) && !OPENS_PAST_TENSE.test(tail)) {
+          return "Stop at the question mark. The only thing that may follow it is something that happened to you. Cut the rest.";
+        }
+      }
+      // Only the declarative sentences: "how do you usually measure that?"
+      // is a fine question, "that usually eats the ROAS story." is the
+      // claim we are cutting, and the difference is the question mark.
+      {
+        const statements = (text.match(/[^.!?]+[.!?]*/g) ?? []).filter(
+          (sentence) => !sentence.includes("?"),
+        );
+        if (statements.some((sentence) => GENERALISATION.test(sentence))) {
+          return "That is a claim about what usually happens, not a question about what they did. Cut the generalisation and ask only about their case.";
+        }
       }
       return null;
   }
