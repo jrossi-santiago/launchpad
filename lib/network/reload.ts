@@ -3,6 +3,7 @@ import type { BrandPackRow } from "@/lib/anthropic/brandPack";
 import {
   buildMockFeedReply,
   callHaikuFeedReply,
+  type FeedReplyResult,
   type ReplyTarget,
 } from "@/lib/anthropic/feedReply";
 import { pickOnTerritory } from "@/lib/anthropic/onTerritory";
@@ -47,13 +48,22 @@ export type ReloadSummary = {
   // own field, and so were written with the Brand Pack's agenda in hand.
   // Everything else was written voice-only.
   onTerritory: number;
+  // Cards the model read and declined to reply to, because the post
+  // turned on something it was not given. Not a failure — the alternative
+  // was a reply that pretended.
+  declined: number;
   // True when the budget, not the work, is what ended the run — the UI
   // says so rather than leaving unexplained cards without replies.
   budgetReached: boolean;
 };
 
+// A decline counts as fresh alongside a reply: the model read this post
+// within the window and said it could not follow it, and asking the same
+// model the same question again inside six hours buys nothing. Re-Write
+// still forces past it, which is where a second look belongs.
 function isReplyFresh(card: FeedCard, now: number): boolean {
-  if (!card.suggested_reply || !card.suggested_reply_at) return false;
+  if (!card.suggested_reply && !card.reply_unclear) return false;
+  if (!card.suggested_reply_at) return false;
   const written = Date.parse(card.suggested_reply_at);
   if (Number.isNaN(written)) return false;
   return now - written < REPLY_TTL_MS;
@@ -97,21 +107,29 @@ async function writeReply(
   brandPack: BrandPackRow,
   card: FeedCard,
   onTerritory: boolean,
-): Promise<string | null> {
+): Promise<FeedReplyResult | null> {
   try {
-    const reply = process.env.ANTHROPIC_API_KEY
+    const result = process.env.ANTHROPIC_API_KEY
       ? await callHaikuFeedReply(brandPack, toTarget(card), onTerritory)
       : buildMockFeedReply(toTarget(card));
 
     const writtenAt = new Date().toISOString();
     const { error } = await supabase
       .from("network_tweets")
-      .update({ suggested_reply: reply, suggested_reply_at: writtenAt })
+      .update({
+        suggested_reply: result.reply,
+        suggested_reply_at: writtenAt,
+        reply_about: result.about,
+        // Only kept when it is the reason there is no reply. On a card
+        // that did get one, what the model was missing did not stop it,
+        // and showing it would just be noise under a usable reply.
+        reply_unclear: result.reply ? null : (result.unclear ?? "No reason given."),
+      })
       .eq("id", card.id)
       .eq("user_id", userId);
 
     if (error) throw error;
-    return reply;
+    return result;
   } catch (error) {
     console.error(`feed reload reply failed for card ${card.id}`, error);
     return null;
@@ -141,6 +159,7 @@ export async function writeReloadReplies(
     reused: 0,
     failed: 0,
     onTerritory: 0,
+    declined: 0,
     budgetReached: false,
   };
 
@@ -167,7 +186,7 @@ export async function writeReloadReplies(
     })),
   );
 
-  const replies = new Map<string, string>();
+  const results = new Map<string, FeedReplyResult>();
   for (let i = 0; i < needsReply.length; i += REPLY_CONCURRENCY) {
     const batch = needsReply.slice(i, i + REPLY_CONCURRENCY);
     const written = await Promise.all(
@@ -175,24 +194,37 @@ export async function writeReloadReplies(
         writeReply(supabase, userId, brandPack, card, onTerritory.has(card.id)),
       ),
     );
-    written.forEach((reply, index) => {
-      if (reply) {
-        replies.set(batch[index].id, reply);
-        summary.written += 1;
-        // Counted on the way out, not from the gate's picks: a card the
-        // gate chose but the model failed on is not a reply you got.
-        if (onTerritory.has(batch[index].id)) summary.onTerritory += 1;
-      } else {
+    written.forEach((result, index) => {
+      if (!result) {
         summary.failed += 1;
+        return;
       }
+
+      results.set(batch[index].id, result);
+
+      if (!result.reply) {
+        summary.declined += 1;
+        return;
+      }
+
+      summary.written += 1;
+      // Counted on the way out, not from the gate's picks: a card the
+      // gate chose but the model failed on is not a reply you got.
+      if (onTerritory.has(batch[index].id)) summary.onTerritory += 1;
     });
   }
 
   return {
     cards: cards.map((card) => {
-      const reply = replies.get(card.id);
-      return reply
-        ? { ...card, suggested_reply: reply, suggested_reply_at: new Date().toISOString() }
+      const result = results.get(card.id);
+      return result
+        ? {
+            ...card,
+            suggested_reply: result.reply,
+            suggested_reply_at: new Date().toISOString(),
+            reply_about: result.about,
+            reply_unclear: result.reply ? null : (result.unclear ?? "No reason given."),
+          }
         : card;
     }),
     summary,

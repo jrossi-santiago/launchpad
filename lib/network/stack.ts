@@ -41,9 +41,15 @@ export type NetworkCard = {
   source: string;
   quoted: QuotedPost | null;
   // Written by a Feed Reload: one reply Haiku wrote for this post
-  // specifically. Null on a card that has never been through one.
+  // specifically. Null on a card that has never been through one — and
+  // also on one that was read and declined, which reply_unclear tells
+  // apart.
   suggested_reply: string | null;
   suggested_reply_at: string | null;
+  // What the model made of the post, and what it could not tell from what
+  // it was given. reply_unclear with no reply is a decline.
+  reply_about: string | null;
+  reply_unclear: string | null;
 };
 
 export type NetworkStack = {
@@ -118,7 +124,7 @@ export async function loadStacks(
   const { data: tweets, error: tweetsError } = await supabase
     .from("network_tweets")
     .select(
-      "id, profile_id, x_tweet_id, content, url, metrics, engagement_score, posted_at, source, quoted, suggested_reply, suggested_reply_at",
+      "id, profile_id, x_tweet_id, content, url, metrics, engagement_score, posted_at, source, quoted, suggested_reply, suggested_reply_at, reply_about, reply_unclear",
     )
     .eq("user_id", userId)
     .eq("state", "new");
@@ -144,6 +150,9 @@ export async function loadStacks(
         typeof row.suggested_reply === "string" ? row.suggested_reply : null,
       suggested_reply_at:
         typeof row.suggested_reply_at === "string" ? row.suggested_reply_at : null,
+      reply_about: typeof row.reply_about === "string" ? row.reply_about : null,
+      reply_unclear:
+        typeof row.reply_unclear === "string" ? row.reply_unclear : null,
     };
     const existing = byProfile.get(profileId);
     if (existing) existing.push(card);

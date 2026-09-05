@@ -27,6 +27,7 @@ type ReloadSummary = {
   reused: number;
   failed: number;
   onTerritory: number;
+  declined: number;
   budgetReached: boolean;
 };
 
@@ -49,6 +50,9 @@ function describeReload(summary: ReloadSummary, mode: ReloadMode): string {
     );
   }
   if (summary.reused > 0) parts.push(`${summary.reused} already had one`);
+  if (summary.declined > 0) {
+    parts.push(`${summary.declined} left for you to read`);
+  }
   if (summary.failed > 0) parts.push(`${summary.failed} couldn't be written`);
   // Says the quiet part: almost everything was written as a person
   // talking, and only these few had your own field in hand.
@@ -488,6 +492,21 @@ export function FeedStream({
                   </div>
                 ) : null}
 
+                {/* Read and declined: the model could not follow this
+                    post, and said so instead of replying anyway. Worth
+                    its own block — a card with no reply because nobody
+                    has swept it yet is a different thing. */}
+                {!card.suggested_reply && card.reply_unclear ? (
+                  <div className="flex flex-col gap-1 rounded-xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-900 dark:bg-amber-950/30">
+                    <span className="text-[10px] font-medium tracking-wider text-amber-700 uppercase dark:text-amber-300">
+                      One for you to read
+                    </span>
+                    <p className="text-sm leading-relaxed text-amber-900 dark:text-amber-100">
+                      {card.reply_unclear}
+                    </p>
+                  </div>
+                ) : null}
+
                 {card.suggested_reply ? (
                   <div className="flex flex-col gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 dark:border-emerald-900 dark:bg-emerald-950/30">
                     <span className="text-[10px] font-medium tracking-wider text-emerald-700 uppercase dark:text-emerald-300">
@@ -506,6 +525,16 @@ export function FeedStream({
                         : "Copy & open X ↗"}
                     </button>
                   </div>
+                ) : null}
+
+                {/* What it thought the post was about. The reply is
+                    only as good as this, so it is on the card rather than
+                    in a log — a wrong reading is visible here in a second,
+                    and invisible anywhere else. */}
+                {card.reply_about ? (
+                  <p className="text-xs leading-relaxed text-zinc-400 dark:text-zinc-500">
+                    <span className="font-medium">Read as:</span> {card.reply_about}
+                  </p>
                 ) : null}
 
                 <div className="flex items-center gap-3 text-xs text-zinc-500 dark:text-zinc-400">
