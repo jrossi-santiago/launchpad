@@ -17,6 +17,29 @@ export const MAX_PROFILES = 25;
 // is left alone; the Refresh button sends force and ignores it.
 export const POLL_TTL_MS = 3 * 60 * 1000;
 
+// How old a post may be and still count as new.
+//
+// The Feed used to be "every post from a watched account you have not
+// decided on yet", which sounds like an inbox and behaves like a landfill.
+// A stack only ever shows STACK_WINDOW posts per account, so an account
+// that posts a lot leaves undecided rows behind every poll; clear the ten
+// on screen and the ten underneath — days old, in no particular order —
+// take their place. That is the "old random tweets" problem, and no
+// amount of marking things done fixes it, because the backlog is deeper
+// than the window.
+//
+// So age, not the absence of a decision, is what decides. A post is in
+// your Feed while it is new and leaves on its own afterwards, which makes
+// the Feed answer one question: what have the people I watch posted
+// since yesterday? Mark everything done at midnight, come back five
+// minutes later, and the only thing that can be there is what was posted
+// in between.
+//
+// A day rather than an hour because the point is to catch what your
+// accounts posted, not to punish you for sleeping — but it is a window,
+// not an inbox, and anything older is gone whether you read it or not.
+export const FEED_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
 export type NetworkProfileRow = {
   id: string;
   user_id: string;
@@ -38,6 +61,11 @@ export type NetworkCard = {
   metrics: TweetMetrics;
   engagement_score: number | null;
   posted_at: string | null;
+  // When this row was written — when we first pulled the post, not when
+  // it was posted. The stand-in for posted_at when GetXAPI gives us a
+  // post with no date on it, so one missing field cannot make a card
+  // ageless and park it in the Feed forever.
+  first_seen_at: string | null;
   source: string;
   quoted: QuotedPost | null;
   // What the post links to and shows — the half of it that plain text
@@ -127,6 +155,25 @@ export function isFresh(profile: NetworkProfileRow, now = Date.now()): boolean {
   return now - polled < POLL_TTL_MS;
 }
 
+// How old a post is, in milliseconds. Read off posted_at, and off the row
+// we wrote when we first saw it when the post carries no date.
+function ageOf(card: NetworkCard, now: number): number | null {
+  for (const stamp of [card.posted_at, card.first_seen_at]) {
+    if (!stamp) continue;
+    const at = Date.parse(stamp);
+    if (!Number.isNaN(at)) return now - at;
+  }
+  return null;
+}
+
+// True while a post still counts as new. A card with no usable date at
+// all is not new — it is a row we cannot place in time, and the Feed is
+// ordered by time.
+export function isRecent(card: NetworkCard, now = Date.now()): boolean {
+  const age = ageOf(card, now);
+  return age !== null && age < FEED_MAX_AGE_MS;
+}
+
 // One query for profiles and one for their undecided cards, grouped in
 // memory — cheap at a couple of dozen profiles, and it keeps the per-stack
 // window in one place instead of issuing a query per stack.
@@ -147,7 +194,7 @@ export async function loadStacks(
   const { data: tweets, error: tweetsError } = await supabase
     .from("network_tweets")
     .select(
-      "id, profile_id, x_tweet_id, content, url, metrics, engagement_score, posted_at, source, quoted, context, suggested_reply, suggested_reply_at, reply_about, reply_unclear, reply_sweep_id",
+      "id, profile_id, x_tweet_id, content, url, metrics, engagement_score, posted_at, created_at, source, quoted, context, suggested_reply, suggested_reply_at, reply_about, reply_unclear, reply_sweep_id",
     )
     .eq("user_id", userId)
     .eq("state", "new");
@@ -167,6 +214,7 @@ export async function loadStacks(
       engagement_score:
         typeof row.engagement_score === "number" ? row.engagement_score : null,
       posted_at: typeof row.posted_at === "string" ? row.posted_at : null,
+      first_seen_at: typeof row.created_at === "string" ? row.created_at : null,
       source: typeof row.source === "string" ? row.source : "poll",
       quoted: toQuoted(row.quoted),
       context: toContext(row.context),
@@ -185,9 +233,16 @@ export async function loadStacks(
     else byProfile.set(profileId, [card]);
   }
 
+  // Filtered before the window is applied, not after: a stack of ten
+  // slots should hold the ten newest posts that are still new, not
+  // whatever survives after the slice spent its slots on last week.
+  const now = Date.now();
   return profileRows.map((profile) => ({
     profile,
-    cards: (byProfile.get(profile.id) ?? []).sort(byNewest).slice(0, STACK_WINDOW),
+    cards: (byProfile.get(profile.id) ?? [])
+      .filter((card) => isRecent(card, now))
+      .sort(byNewest)
+      .slice(0, STACK_WINDOW),
   }));
 }
 

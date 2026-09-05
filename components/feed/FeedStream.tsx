@@ -37,7 +37,7 @@ function describeReload(summary: ReloadSummary, mode: ReloadMode): string {
   if (summary.considered === 0) {
     return mode === "rewrite"
       ? "Nothing in your Feed to rewrite yet."
-      : "Nothing new from your accounts — the Feed is up to date.";
+      : "Nothing new from your accounts in the last day — the Feed is up to date.";
   }
 
   const parts: string[] = [];
@@ -361,7 +361,8 @@ export function FeedStream({
             Feed
           </h1>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            Every account you watch, newest first. Reply, like, or mark done.
+            New posts from every account you watch, last 24 hours. Reply, like,
+            or mark done.
           </p>
         </div>
         {/* A clean sweep, on demand: throw out every reply in the Feed
@@ -423,7 +424,7 @@ export function FeedStream({
           ? "Writing a fresh reply for every post already in your Feed. This takes a moment."
           : busy
             ? "Pulling the newest posts from every account you watch. This takes a moment."
-            : "Pulls the latest posts from every account you watch and writes a reply for each one."}
+            : "Pulls the last day of posts from every account you watch and writes a reply for each one."}
       </p>
 
       {reloadNote ? (
@@ -451,11 +452,11 @@ export function FeedStream({
       {visible.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-300 px-6 py-16 text-center dark:border-zinc-700">
           <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-            {hasProfiles ? "Nothing left to reply to." : "No accounts to watch yet."}
+            {hasProfiles ? "Nothing new to reply to." : "No accounts to watch yet."}
           </p>
           <p className="max-w-xs text-sm text-zinc-500 dark:text-zinc-400">
             {hasProfiles
-              ? "You've dealt with everything your accounts posted. Try Explore for strangers worth replying to."
+              ? "Nobody you watch has posted anything new in the last day. Try Explore for strangers worth replying to."
               : "Add the accounts you want to reply to on Network, and their posts show up here."}
           </p>
         </div>
