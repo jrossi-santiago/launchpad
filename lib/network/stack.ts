@@ -40,6 +40,10 @@ export type NetworkCard = {
   posted_at: string | null;
   source: string;
   quoted: QuotedPost | null;
+  // Written by a Feed Reload: one reply Haiku wrote for this post
+  // specifically. Null on a card that has never been through one.
+  suggested_reply: string | null;
+  suggested_reply_at: string | null;
 };
 
 export type NetworkStack = {
@@ -114,7 +118,7 @@ export async function loadStacks(
   const { data: tweets, error: tweetsError } = await supabase
     .from("network_tweets")
     .select(
-      "id, profile_id, x_tweet_id, content, url, metrics, engagement_score, posted_at, source, quoted",
+      "id, profile_id, x_tweet_id, content, url, metrics, engagement_score, posted_at, source, quoted, suggested_reply, suggested_reply_at",
     )
     .eq("user_id", userId)
     .eq("state", "new");
@@ -136,6 +140,10 @@ export async function loadStacks(
       posted_at: typeof row.posted_at === "string" ? row.posted_at : null,
       source: typeof row.source === "string" ? row.source : "poll",
       quoted: toQuoted(row.quoted),
+      suggested_reply:
+        typeof row.suggested_reply === "string" ? row.suggested_reply : null,
+      suggested_reply_at:
+        typeof row.suggested_reply_at === "string" ? row.suggested_reply_at : null,
     };
     const existing = byProfile.get(profileId);
     if (existing) existing.push(card);
