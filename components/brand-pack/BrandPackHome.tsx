@@ -42,7 +42,7 @@ export function BrandPackHome({
       </h1>
       <p className="mt-2 max-w-md text-sm text-zinc-500 dark:text-zinc-400">
         A short interview builds your Brand Pack, which powers everything
-        else in Launchpad — from what we search for to how replies sound.
+        else in HeatCheck — from what we search for to how replies sound.
       </p>
       <button
         type="button"

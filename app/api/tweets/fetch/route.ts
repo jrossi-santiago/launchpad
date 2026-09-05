@@ -83,7 +83,7 @@ export async function POST(request: Request) {
 
     const tweetRow = await upsertTweetRow(supabase, user.id, fetched);
 
-    const draftTexts = process.env.ANTHROPIC_API_KEY
+    const written = process.env.ANTHROPIC_API_KEY
       ? await callHaiku(brandPack as BrandPackRow, tweetRow)
       : buildMockDrafts(brandPack as BrandPackRow, tweetRow);
 
@@ -91,7 +91,7 @@ export async function POST(request: Request) {
       supabase,
       user.id,
       tweetRow.id,
-      draftTexts,
+      written,
     );
 
     const { data: draftedTweet, error: statusError } = await supabase

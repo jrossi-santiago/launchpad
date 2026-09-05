@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { DraftRow } from "@/lib/anthropic/drafts";
 import type { TweetRow } from "@/lib/getx/tweet";
 import { XConnectionError, postAs, type XConnectionRow } from "@/lib/x/writer";
+import { withCta } from "@/lib/x/intent";
 import { getActionUsage } from "@/lib/usage/actions";
 
 export async function POST(request: Request) {
@@ -20,6 +21,12 @@ export async function POST(request: Request) {
     body && typeof body === "object" && typeof (body as { draft_id?: unknown }).draft_id === "string"
       ? (body as { draft_id: string }).draft_id
       : null;
+
+  // The CTA is a per-post decision made on the card, so it arrives with
+  // the request rather than being read off the draft row. Absent means
+  // the comment alone, which is the default everywhere.
+  const attachCta =
+    body && typeof body === "object" && (body as { with_cta?: unknown }).with_cta === true;
 
   if (!draftId) {
     return NextResponse.json({ error: "Missing draft_id." }, { status: 400 });
@@ -142,7 +149,10 @@ export async function POST(request: Request) {
   }
 
   try {
-    const replyText = draftRow.draft_text ?? "";
+    const replyText = withCta(
+      draftRow.draft_text ?? "",
+      attachCta ? draftRow.draft_cta : null,
+    );
     // Whether this goes out through the official X API or the legacy
     // cookie path is decided by the connection row itself — see
     // resolveWriteProvider() in lib/x/writer.ts.

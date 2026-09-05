@@ -164,7 +164,7 @@ export function NetworkBoard({
       dropCard(profileId, cardId);
 
       // Second, separate, fully-awaited request — the same
-      // POST /api/drafts/regenerate that Radar calls after an add, rather
+      // POST /api/drafts/regenerate that the queue calls after an add, rather
       // than a second draft-generating code path.
       const tweetId = body?.tweet?.id as string | undefined;
       if (!tweetId) {

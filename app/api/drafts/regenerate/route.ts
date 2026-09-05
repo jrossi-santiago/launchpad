@@ -69,7 +69,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const draftTexts = process.env.ANTHROPIC_API_KEY
+    const written = process.env.ANTHROPIC_API_KEY
       ? await callHaiku(brandPack as BrandPackRow, tweet as TweetRow)
       : buildMockDrafts(brandPack as BrandPackRow, tweet as TweetRow);
 
@@ -80,7 +80,7 @@ export async function POST(request: Request) {
 
     if (deleteError) throw deleteError;
 
-    const drafts = await insertDrafts(supabase, user.id, tweet.id, draftTexts);
+    const drafts = await insertDrafts(supabase, user.id, tweet.id, written);
 
     if (tweet.status === "queued") {
       const { error: statusError } = await supabase

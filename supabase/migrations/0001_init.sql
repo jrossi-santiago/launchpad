@@ -1,4 +1,4 @@
--- Launchpad Day 1: full schema skeleton.
+-- HeatCheck Day 1: full schema skeleton.
 -- Only `users` is populated today; the rest exist so later days can extend
 -- them without a rewrite.
 

@@ -118,7 +118,7 @@ export function ProfileStack({
 
       {cards.length === 0 ? (
         <div className="rounded-xl border border-dashed border-zinc-300 px-4 py-10 text-center text-xs text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
-          All caught up. Refresh to check for new posts.
+          Nothing new in the last day. Refresh to check for new posts.
         </div>
       ) : (
         <>

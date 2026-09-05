@@ -154,7 +154,11 @@ export function LaunchpadQueue({
     }
   }
 
-  async function handlePost(draftId: string) {
+  // `withCta` is the card's toggle, not a property of the draft: the CTA
+  // is stored on its own and only becomes part of the reply if the founder
+  // says so for this post. The server does the joining, so what goes out
+  // and what is recorded as posted_text are the same string.
+  async function handlePost(draftId: string, withCta: boolean) {
     if (postingIds.has(draftId)) return;
 
     setPostingIds((prev) => new Set(prev).add(draftId));
@@ -168,7 +172,7 @@ export function LaunchpadQueue({
       const response = await fetch("/api/drafts/post", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ draft_id: draftId }),
+        body: JSON.stringify({ draft_id: draftId, with_cta: withCta }),
       });
 
       const body = await response.json().catch(() => null);
@@ -531,9 +535,8 @@ export function LaunchpadQueue({
             No tweets in your queue yet.
           </p>
           <p className="max-w-sm text-sm text-zinc-500 dark:text-zinc-400">
-            Paste a tweet URL or ID above to add one, or pull high-engagement
-            posts in from Radar —{" "}
-            <span className="font-medium">coming soon</span>.
+            Paste a tweet URL or ID above to add one, or send posts here
+            from the Feed and from HeatCheck.
           </p>
         </div>
       ) : (
@@ -548,7 +551,7 @@ export function LaunchpadQueue({
           {xHandle != null && !canAutoReply ? (
             <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
               <span className="font-medium text-zinc-900 dark:text-zinc-50">
-                Replies are sent by you, not by Launchpad.
+                Replies are sent by you, not by HeatCheck.
               </span>{" "}
               Since 23 February 2026 X does not allow apps to reply to other
               people&apos;s posts. Hit{" "}
@@ -575,7 +578,7 @@ export function LaunchpadQueue({
                   isDeleting={deletingIds.has(item.tweet.id)}
                   xHandle={xHandle}
                   canAutoReply={canAutoReply}
-                  onPost={(draftId) => void handlePost(draftId)}
+                  onPost={(draftId, withCta) => void handlePost(draftId, withCta)}
                   postingIds={postingIds}
                   postErrors={postErrors}
                   onMarkPosted={(draftId) => void handleMarkPosted(draftId)}
