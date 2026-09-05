@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { CtaToggle } from "@/components/comment/CtaToggle";
+import { withCta } from "@/lib/x/intent";
 import type { HeatCheckCard, HeatCheckKind } from "@/lib/anthropic/heatcheck";
 import type { HeatCheckUsage } from "@/lib/usage/heatChecks";
 
@@ -54,6 +56,9 @@ export function HeatCheckTab({
   const [progress, setProgress] = useState(0);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [queuedIds, setQueuedIds] = useState<Set<string>>(new Set());
+  // Which cards are currently showing their CTA. Per card, and reset by a
+  // new run along with the cards themselves.
+  const [ctaOn, setCtaOn] = useState<Set<string>>(new Set());
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -105,6 +110,7 @@ export function HeatCheckTab({
           throw new Error(body?.error ?? `HeatCheck failed (${response.status}).`);
         }
         setCards((body?.cards ?? []) as HeatCheckCard[]);
+        setCtaOn(new Set());
         setProgress(1);
         setStatus("done");
       })
@@ -115,9 +121,25 @@ export function HeatCheckTab({
       });
   }
 
+  function toggleCta(id: string) {
+    setCtaOn((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  // What gets copied is what the card is showing — comment alone, or
+  // comment plus the CTA the founder turned on.
   async function copy(card: HeatCheckCard) {
     try {
-      await navigator.clipboard.writeText(card.read.comment);
+      await navigator.clipboard.writeText(
+        withCta(
+          card.read.comment,
+          ctaOn.has(card.x_tweet_id) ? card.read.cta : null,
+        ),
+      );
       setCopiedId(card.x_tweet_id);
       setTimeout(() => setCopiedId(null), 2000);
     } catch {
@@ -284,11 +306,22 @@ export function HeatCheckTab({
                 <span>{card.metrics.reply_count} replies</span>
               </div>
 
-              <div className="rounded-xl bg-zinc-50 p-3 dark:bg-zinc-950">
+              <div className="flex flex-col gap-2 rounded-xl bg-zinc-50 p-3 dark:bg-zinc-950">
                 <p className="text-[15px] leading-relaxed whitespace-pre-wrap text-zinc-900 dark:text-zinc-50">
                   {card.read.comment}
                 </p>
-                <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                <CtaToggle
+                  cta={card.read.cta}
+                  on={ctaOn.has(card.x_tweet_id)}
+                  onToggle={() => toggleCta(card.x_tweet_id)}
+                />
+                {/* What the comment adds, in the model's own words. The
+                    thing to disagree with before this goes under a post
+                    thousands of people are reading. */}
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  <span className="font-medium">Adds:</span> {card.read.point}
+                </p>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
                   {card.read.why}
                 </p>
               </div>

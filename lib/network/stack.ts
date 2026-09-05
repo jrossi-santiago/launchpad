@@ -83,6 +83,11 @@ export type NetworkCard = {
   // apart.
   suggested_reply: string | null;
   suggested_reply_at: string | null;
+  // The ask that may go under the reply, kept apart from it so the Feed
+  // can show the reply alone and append this only when asked. Null for
+  // every card whose post was not about the founder's own field, which is
+  // most of them.
+  suggested_cta: string | null;
   // What the model made of the post, and what it could not tell from what
   // it was given. reply_unclear with no reply is a decline.
   reply_about: string | null;
@@ -200,7 +205,7 @@ export async function loadStacks(
   const { data: tweets, error: tweetsError } = await supabase
     .from("network_tweets")
     .select(
-      "id, profile_id, x_tweet_id, content, url, metrics, engagement_score, posted_at, created_at, source, quoted, context, suggested_reply, suggested_reply_at, reply_about, reply_unclear, reply_sweep_id",
+      "id, profile_id, x_tweet_id, content, url, metrics, engagement_score, posted_at, created_at, source, quoted, context, suggested_reply, suggested_reply_at, suggested_cta, reply_about, reply_unclear, reply_sweep_id",
     )
     .eq("user_id", userId)
     .eq("state", "new");
@@ -228,6 +233,8 @@ export async function loadStacks(
         typeof row.suggested_reply === "string" ? row.suggested_reply : null,
       suggested_reply_at:
         typeof row.suggested_reply_at === "string" ? row.suggested_reply_at : null,
+      suggested_cta:
+        typeof row.suggested_cta === "string" ? row.suggested_cta : null,
       reply_about: typeof row.reply_about === "string" ? row.reply_about : null,
       reply_unclear:
         typeof row.reply_unclear === "string" ? row.reply_unclear : null,

@@ -128,6 +128,10 @@ async function writeReply(
       .update({
         suggested_reply: result.reply,
         suggested_reply_at: writtenAt,
+        // Cleared alongside the reply it belongs to: a CTA left behind
+        // from a previous sweep would attach itself to a new comment it
+        // was never written for.
+        suggested_cta: result.reply ? result.cta : null,
         reply_sweep_id: sweepId,
         reply_about: result.about,
         // Only kept when it is the reason there is no reply. On a card
@@ -242,6 +246,7 @@ export async function writeReloadReplies(
             ...card,
             suggested_reply: result.reply,
             suggested_reply_at: new Date().toISOString(),
+            suggested_cta: result.reply ? result.cta : null,
             reply_sweep_id: sweepId,
             reply_about: result.about,
             reply_unclear: result.reply ? null : (result.unclear ?? "No reason given."),

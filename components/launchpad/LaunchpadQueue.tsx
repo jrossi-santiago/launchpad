@@ -154,7 +154,11 @@ export function LaunchpadQueue({
     }
   }
 
-  async function handlePost(draftId: string) {
+  // `withCta` is the card's toggle, not a property of the draft: the CTA
+  // is stored on its own and only becomes part of the reply if the founder
+  // says so for this post. The server does the joining, so what goes out
+  // and what is recorded as posted_text are the same string.
+  async function handlePost(draftId: string, withCta: boolean) {
     if (postingIds.has(draftId)) return;
 
     setPostingIds((prev) => new Set(prev).add(draftId));
@@ -168,7 +172,7 @@ export function LaunchpadQueue({
       const response = await fetch("/api/drafts/post", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ draft_id: draftId }),
+        body: JSON.stringify({ draft_id: draftId, with_cta: withCta }),
       });
 
       const body = await response.json().catch(() => null);
@@ -575,7 +579,7 @@ export function LaunchpadQueue({
                   isDeleting={deletingIds.has(item.tweet.id)}
                   xHandle={xHandle}
                   canAutoReply={canAutoReply}
-                  onPost={(draftId) => void handlePost(draftId)}
+                  onPost={(draftId, withCta) => void handlePost(draftId, withCta)}
                   postingIds={postingIds}
                   postErrors={postErrors}
                   onMarkPosted={(draftId) => void handleMarkPosted(draftId)}

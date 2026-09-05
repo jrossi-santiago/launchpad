@@ -126,9 +126,17 @@ export function ExploreTab({
       throw new Error(draftBody?.error ?? "Couldn't write drafts for that post.");
     }
 
-    return ((draftBody?.drafts ?? []) as { id: string; draft_text: string | null }[])
+    return ((draftBody?.drafts ?? []) as {
+      id: string;
+      draft_text: string | null;
+      draft_cta: string | null;
+    }[])
       .filter((draft) => Boolean(draft.draft_text))
-      .map((draft) => ({ id: draft.id, text: draft.draft_text as string }));
+      .map((draft) => ({
+        id: draft.id,
+        text: draft.draft_text as string,
+        cta: draft.draft_cta ?? null,
+      }));
   }
 
   async function handleRequestDrafts() {

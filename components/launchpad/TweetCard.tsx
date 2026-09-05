@@ -3,7 +3,8 @@
 import { useState } from "react";
 import type { TweetRow } from "@/lib/getx/tweet";
 import type { DraftRow } from "@/lib/anthropic/drafts";
-import { copyAndOpenReply } from "@/lib/x/intent";
+import { copyAndOpenReply, withCta } from "@/lib/x/intent";
+import { CtaToggle } from "@/components/comment/CtaToggle";
 
 // Mirrors GROK_VARIANT in lib/anthropic/drafts.ts. Kept local so this client
 // component does not pull the server-side drafts module into the browser bundle.
@@ -71,7 +72,8 @@ export function TweetCard({
   isDeleting: boolean;
   xHandle: string | null;
   canAutoReply: boolean;
-  onPost: (draftId: string) => void;
+  // The boolean is the card's CTA toggle for that draft — see CtaToggle.
+  onPost: (draftId: string, withCta: boolean) => void;
   postingIds: Set<string>;
   postErrors: Record<string, string>;
   onMarkPosted: (draftId: string) => void;
@@ -94,15 +96,33 @@ export function TweetCard({
   audienceError: string | undefined;
 }) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  // Drafts showing their CTA. Per draft, because the three options on a
+  // card are three different comments and only one of them goes out.
+  const [ctaOn, setCtaOn] = useState<Set<string>>(new Set());
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [confirmingFollow, setConfirmingFollow] = useState(false);
+
+  function toggleCta(draftId: string) {
+    setCtaOn((current) => {
+      const next = new Set(current);
+      if (next.has(draftId)) next.delete(draftId);
+      else next.add(draftId);
+      return next;
+    });
+  }
+
+  // The draft as the card is currently showing it: the comment, plus the
+  // CTA if this draft has it turned on.
+  function textOf(draft: DraftRow): string {
+    return withCta(draft.draft_text ?? "", ctaOn.has(draft.id) ? draft.draft_cta : null);
+  }
 
   function handleCopyAndPost(draft: DraftRow) {
     if (!draft.draft_text) return;
 
     // Copies and opens X's composer in one gesture — see lib/x/intent.ts
     // for why the copy is deliberately not awaited first.
-    copyAndOpenReply(tweet.x_tweet_id, draft.draft_text);
+    copyAndOpenReply(tweet.x_tweet_id, textOf(draft));
 
     setCopiedId(draft.id);
     setTimeout(() => {
@@ -113,7 +133,7 @@ export function TweetCard({
   async function handleCopy(draft: DraftRow) {
     if (!draft.draft_text) return;
     try {
-      await navigator.clipboard.writeText(draft.draft_text);
+      await navigator.clipboard.writeText(textOf(draft));
       setCopiedId(draft.id);
       setTimeout(() => {
         setCopiedId((current) => (current === draft.id ? null : current));
@@ -285,9 +305,18 @@ export function TweetCard({
                   <p className="flex-1 text-sm text-zinc-800 dark:text-zinc-200">
                     {draft.draft_text}
                   </p>
+                  <CtaToggle
+                    cta={draft.draft_cta}
+                    on={ctaOn.has(draft.id)}
+                    onToggle={() => toggleCta(draft.id)}
+                  />
                   <div className="flex items-center justify-between">
+                    {/* Counts what would actually be posted, CTA
+                        included — the pair is written to fit under 280
+                        together, and this is where you would see it if
+                        one ever did not. */}
                     <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                      {(draft.draft_text ?? "").length}/280
+                      {textOf(draft).length}/280
                     </span>
                     <div className="flex items-center gap-2">
                       <button
@@ -341,7 +370,7 @@ export function TweetCard({
                           {xHandle != null && canAutoReply ? (
                             <button
                               type="button"
-                              onClick={() => onPost(draft.id)}
+                              onClick={() => onPost(draft.id, ctaOn.has(draft.id))}
                               disabled={isPosting}
                               className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
                             >

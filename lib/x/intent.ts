@@ -25,3 +25,14 @@ export function copyAndOpenReply(xTweetId: string, text: string): void {
   void navigator.clipboard?.writeText(text).catch(() => undefined);
   window.open(replyIntentUrl(xTweetId, text), "_blank", "noopener,noreferrer");
 }
+
+// How a comment and its CTA are joined on the way to X. One blank line,
+// so the ask reads as the separate line it was written as.
+//
+// It lives here rather than beside the prompts that generate the two
+// halves because joining them is a posting concern, and because this
+// module is already the one the client components import — the prompt
+// modules are server-side and should stay out of the browser bundle.
+export function withCta(comment: string, cta: string | null): string {
+  return cta ? `${comment}\n\n${cta}` : comment;
+}

@@ -1,5 +1,14 @@
 import type { createClient } from "@/lib/supabase/server";
 import type { BrandPackRow } from "@/lib/anthropic/brandPack";
+import {
+  BREVITY_RULES,
+  COMMENT_MAX,
+  CTA_FIELD,
+  CTA_RULES,
+  POINT_FIELD,
+  cleanCta,
+  isUsableComment,
+} from "@/lib/anthropic/comment";
 
 export type TweetForDrafts = {
   author_handle: string | null;
@@ -12,8 +21,19 @@ export type DraftRow = {
   user_id: string;
   variant: number;
   draft_text: string | null;
+  // The ask that may be appended to this draft, written as its own line
+  // and stored as its own column. Null on the @grok draft always, and on
+  // a reply draft with nothing honest to offer.
+  draft_cta: string | null;
   status: string;
   created_at: string;
+};
+
+// One draft on its way to the database: the comment, and the optional
+// line the founder may put under it.
+export type WrittenDraft = {
+  text: string;
+  cta: string | null;
 };
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
@@ -29,11 +49,23 @@ const SAVE_REPLIES_TOOL = {
     properties: {
       replies: {
         type: "array",
-        items: { type: "string", maxLength: 280 },
+        items: {
+          type: "object",
+          properties: {
+            point: POINT_FIELD,
+            reply: {
+              type: "string",
+              maxLength: COMMENT_MAX,
+              description: `The draft, in the founder's voice, ${COMMENT_MAX} characters or fewer. One sentence, two only if the second is a question.`,
+            },
+            cta: CTA_FIELD,
+          },
+          required: ["point", "reply", "cta"],
+        },
         minItems: 2,
         maxItems: 2,
         description:
-          "2 distinct reply drafts in the founder's voice, each under 280 characters.",
+          "2 distinct reply drafts in the founder's voice, each naming its own point first.",
       },
     },
     required: ["replies"],
@@ -72,13 +104,17 @@ const SAVE_GROK_TOOL = {
 const REPLIES_PROMPT = [
   "You are writing X (Twitter) reply drafts for a founder, in their own voice, based on their Brand Pack.",
   "Each draft must read like something a real person would type as a quick reply — not ad copy, no hashtags unless the brand voice uses them.",
-  "Every draft MUST fit X's 280-character limit including spaces and punctuation; if a draft would run long, tighten the wording rather than truncate it.",
+  ...BREVITY_RULES,
+  "Each draft names its own `point` before it is written, and the two points must be different things — that is what makes the drafts genuinely different rather than one idea worded twice.",
   "",
   "Write as someone who knows this world well and enjoys talking about it — a person joining the conversation, not an expert marking the post. Pick the bit that actually caught your eye, and bring something of your own: what happened when you tried it, the case that went differently, the thing you have wondered about since. Curiosity beats correction: if you see it differently, say so as your own read, not as a fix. A real question is a good reply when you actually want the answer.",
   "Do not sound like a know-it-all repeating the post back. Never restate or summarise what they just said before adding your bit — start at your bit. No verdicts on the post ('great point', 'this is so true', 'exactly right', 'underrated take'). No lecturing, no opening with 'Actually', no lesson tacked on the end, no credentials. Never write a reply that would fit any other tweet.",
   "",
-  "These replies are not going anywhere. You are in the thread because the subject is interesting, and that is the entire reason — no pitch, no plug, no mention of the founder's product, and no working round to what they do for a living.",
-  "The two drafts must be genuinely different takes, not one idea worded twice.",
+  "The reply itself is not going anywhere. You are in the thread because the subject is interesting, and that is the entire reason — no pitch, no plug, no mention of the founder's product, and no working round to what they do for a living inside the reply text.",
+  "",
+  "Each draft also carries a `cta`: the line the founder may append under it when they decide this post is worth an ask. It is separate from the reply and is usually left off.",
+  "`offer` is in the request for one reason — so the cta can name something real. It must not appear anywhere in the reply text, in any form.",
+  ...CTA_RULES,
 ].join("\n");
 
 const GROK_PROMPT = [
@@ -107,11 +143,20 @@ export function buildRepliesRequest(
       {
         role: "user",
         content: JSON.stringify({
-          // Voice only. Positioning and ICP are deliberately absent —
-          // their keys too, since a model shown `icp: null` still knows
-          // an ICP is a thing it is meant to have.
+          // Voice, and one fenced-off line of agenda.
+          //
+          // The ICP stays out — their keys too, since a model shown
+          // `icp: null` still knows an ICP is a thing it is meant to
+          // have — and the reply text is still written with nowhere to
+          // steer. What changed is that a CTA has to name something the
+          // founder actually has, and a model with no idea what that is
+          // invents one. So the positioning arrives named for the only
+          // field allowed to use it, which is the arrangement HeatCheck
+          // has always run: an agenda with a designated outlet stays in
+          // that outlet, an agenda with none leaks into the reply.
           voice_notes: brandPack.voice_notes,
           voice_samples: brandPack.reply_templates,
+          offer: brandPack.business_summary,
           tweet_author: tweet.author_handle,
           tweet_text: tweet.content,
         }),
@@ -197,20 +242,64 @@ async function post(body: unknown): Promise<unknown> {
   return response.json();
 }
 
-async function requestReplies(brandPack: BrandPackRow, tweet: TweetForDrafts) {
-  const input = toolInput(
-    await post(buildRepliesRequest(brandPack, tweet)),
-    "save_replies",
+function toWrittenDraft(value: unknown): WrittenDraft | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  if (typeof row.reply !== "string" || !isUsableComment(row.reply)) return null;
+  return { text: row.reply.trim(), cta: cleanCta(row.cta) };
+}
+
+function parseReplies(input: Record<string, unknown>): WrittenDraft[] | null {
+  const replies = Array.isArray(input.replies)
+    ? input.replies.map(toWrittenDraft)
+    : [];
+
+  if (replies.length !== 2 || replies.some((draft) => draft === null)) {
+    return null;
+  }
+
+  return replies as WrittenDraft[];
+}
+
+// The replies half now has something a regex can check — the length
+// budget — so it gets the same one corrective retry the @grok question
+// has always had. Before the budget existed there was nothing here to
+// fail on and nothing to retry; a draft that runs long is the model
+// meaning to write a comment and overshooting, which is exactly the kind
+// of miss a second attempt fixes.
+async function requestReplies(
+  brandPack: BrandPackRow,
+  tweet: TweetForDrafts,
+): Promise<WrittenDraft[]> {
+  const request = buildRepliesRequest(brandPack, tweet);
+  const first = parseReplies(toolInput(await post(request), "save_replies"));
+  if (first) return first;
+
+  const second = parseReplies(
+    toolInput(
+      await post({
+        ...request,
+        messages: [
+          ...request.messages,
+          {
+            role: "assistant",
+            content: "The previous drafts were not usable.",
+          },
+          {
+            role: "user",
+            content: `Write the two drafts again. Each one: \`point\` naming the single thing it adds that the tweet does not already say, then a reply of ${COMMENT_MAX} characters or fewer built from that point, then a \`cta\` (empty string if there is nothing concrete to offer).`,
+          },
+        ],
+      }),
+      "save_replies",
+    ),
   );
-  const replies = input.replies;
-  if (
-    !Array.isArray(replies) ||
-    replies.length !== 2 ||
-    !replies.every((reply) => typeof reply === "string")
-  ) {
+
+  if (!second) {
     throw new Error("Anthropic response did not include two usable replies.");
   }
-  return replies as string[];
+
+  return second;
 }
 
 async function requestGrok(
@@ -253,26 +342,37 @@ async function requestGrok(
 export async function callHaiku(
   brandPack: BrandPackRow,
   tweet: TweetForDrafts,
-): Promise<string[]> {
+): Promise<WrittenDraft[]> {
   const [replies, grokQuestion] = await Promise.all([
     requestReplies(brandPack, tweet),
     requestGrok(brandPack, tweet),
   ]);
 
-  return [...replies, grokQuestion];
+  // The @grok draft never carries a CTA. Its whole purpose is a public
+  // answer in the thread, and an ask stapled underneath reads as bait.
+  return [...replies, { text: grokQuestion, cta: null }];
 }
 
 export function buildMockDrafts(
   brandPack: BrandPackRow,
   tweet: TweetForDrafts,
-): string[] {
+): WrittenDraft[] {
   const author = tweet.author_handle ?? "them";
   const snippet = (tweet.content ?? "").slice(0, 60);
 
   return [
-    `[Mock draft 1] Replying to ${author} — set ANTHROPIC_API_KEY to generate real, on-voice drafts.`,
-    `[Mock draft 2] re: "${snippet}" — this is a placeholder until ANTHROPIC_API_KEY is set.`,
-    `${GROK_HANDLE} [Mock draft 3] what's the strongest evidence either way on this? Placeholder until ANTHROPIC_API_KEY is set.`,
+    {
+      text: `[Mock draft 1] Replying to ${author} — set ANTHROPIC_API_KEY for real drafts.`,
+      cta: "Want the mock process? Reply and I'll send it.",
+    },
+    {
+      text: `[Mock draft 2] re: "${snippet}" — placeholder until ANTHROPIC_API_KEY is set.`,
+      cta: null,
+    },
+    {
+      text: `${GROK_HANDLE} [Mock draft 3] what's the strongest evidence either way here?`,
+      cta: null,
+    },
   ];
 }
 
@@ -280,16 +380,17 @@ export async function insertDrafts(
   supabase: SupabaseServerClient,
   userId: string,
   tweetId: string,
-  drafts: string[],
+  drafts: WrittenDraft[],
 ): Promise<DraftRow[]> {
   const { data, error } = await supabase
     .from("drafts")
     .insert(
-      drafts.map((draft_text, i) => ({
+      drafts.map((draft, i) => ({
         tweet_id: tweetId,
         user_id: userId,
         variant: i + 1,
-        draft_text,
+        draft_text: draft.text,
+        draft_cta: draft.cta,
         status: "draft",
       })),
     )

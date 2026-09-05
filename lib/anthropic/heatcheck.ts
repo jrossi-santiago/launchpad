@@ -1,4 +1,14 @@
 import type { BrandPackRow } from "@/lib/anthropic/brandPack";
+import {
+  BREVITY_RULES,
+  COMMENT_MAX,
+  CTA_FIELD,
+  CTA_RULES,
+  POINT_FIELD,
+  cleanCta,
+  isSubstantivePoint,
+  isUsableComment,
+} from "@/lib/anthropic/comment";
 import type { FetchedTweet } from "@/lib/getx/tweet";
 
 // HeatCheck is the one place in the app that runs Sonnet rather than
@@ -18,6 +28,13 @@ export type HeatCheckRead = {
   comment: string;
   kind: HeatCheckKind;
   why: string;
+  // What this comment adds to the thread, in the model's own words. On
+  // the card next to `why`, because a comment whose point you disagree
+  // with is one you want to catch before it goes under a post that is
+  // already being read by thousands of people.
+  point: string;
+  // The optional ask, never appended here. The card decides.
+  cta: string | null;
 };
 
 export type HeatCheckCard = FetchedTweet & {
@@ -47,14 +64,16 @@ const SAVE_COMMENT_TOOL = {
         description:
           "One short sentence — under 20 words — saying why that kind of comment suits this post. Written to the founder, not to the author.",
       },
+      point: POINT_FIELD,
       comment: {
         type: "string",
-        maxLength: 280,
+        maxLength: COMMENT_MAX,
         description:
-          "The comment to post, in the founder's voice, under 280 characters including spaces. A grok comment must contain @grok.",
+          `The comment to post, in the founder's voice, ${COMMENT_MAX} characters or fewer including spaces. One sentence, two only if the second is a question. A grok comment must contain @grok.`,
       },
+      cta: CTA_FIELD,
     },
-    required: ["about", "kind", "why", "comment"],
+    required: ["about", "kind", "why", "point", "comment", "cta"],
   },
 } as const;
 
@@ -69,13 +88,17 @@ const SYSTEM_PROMPT = [
   "- `grok`: the thread is turning on a factual question nobody has settled — a number, a claim, a comparison — and asking @grok publicly would genuinely serve the people reading. Never a question you could answer yourself, and never a device for getting your own topic into the thread.",
   "- `pitch`: the post is about the exact problem this founder's product solves, and someone reading it would want to know the product exists. Only when it is that direct. Wanting to pitch is not a reason.",
   "",
-  "Then write the comment.",
-  "- It must read like a person typing a quick reply on their phone: one or two sentences, no hashtags unless the brand voice uses them, no emoji unless the voice uses them.",
+  "Then name the one thing your comment adds in `point`, and write the comment from that.",
+  ...BREVITY_RULES.map((rule) => `- ${rule}`),
+  "- It must read like a person typing a quick reply on their phone. No hashtags unless the brand voice uses them, no emoji unless the voice uses them.",
   "- Never restate or summarise the post before adding your bit. Start at your bit.",
   "- No verdicts on the post — no 'great point', 'this is so true', 'underrated take'. No lecturing, no opening with 'Actually', no credentials, no lesson tacked on the end.",
   "- Never write a comment that would fit any other post.",
-  "- It MUST fit 280 characters including spaces. Tighten the wording rather than truncate.",
   "- The founder's voice guardrails ('never say') override everything above.",
+  "",
+  "Then the `cta` — the line the founder may append under the comment when they decide this post is worth an ask.",
+  ...CTA_RULES.map((rule) => `- ${rule}`),
+  "- Leave `cta` empty for a `grok` comment. The point of tagging @grok is a public answer in the thread, and an ask stapled to it reads as bait.",
   "",
   "For a `grok` comment: tag @grok and ask it one genuine question about the post's subject.",
   "For a `pitch` comment: say plainly what the founder does and why it is relevant to what the post said. No link, no DM ask, no 'we're building the future of'. It should read like a person mentioning the thing they made, once, because it happens to fit.",
@@ -121,7 +144,9 @@ type CommentToolInput = {
   about: string;
   kind: HeatCheckKind;
   why: string;
+  point: string;
   comment: string;
+  cta: string;
 };
 
 function isCommentToolInput(input: unknown): input is CommentToolInput {
@@ -131,16 +156,25 @@ function isCommentToolInput(input: unknown): input is CommentToolInput {
     typeof value.about === "string" &&
     (value.kind === "value" || value.kind === "grok" || value.kind === "pitch") &&
     typeof value.why === "string" &&
-    typeof value.comment === "string"
+    typeof value.point === "string" &&
+    typeof value.comment === "string" &&
+    typeof value.cta === "string"
   );
 }
 
-// Usable means postable: present, inside X's limit, and — for a grok
-// comment — actually tagging grok, since a grok question that forgot the
-// tag is just a question shouted at nobody.
+// Usable means postable: present, inside the comment budget, carrying a
+// point somebody could disagree with, and — for a grok comment — actually
+// tagging grok, since a grok question that forgot the tag is just a
+// question shouted at nobody.
+//
+// The point is checked here rather than trusted because it is the whole
+// mechanism: a model that cannot name what it is adding has written a
+// comment that adds nothing, and that is the comment this feature exists
+// to stop. An unusable CTA is not a failure — it is simply dropped.
 function isUsable(input: CommentToolInput): boolean {
   const trimmed = input.comment.trim();
-  if (trimmed.length === 0 || trimmed.length > 280) return false;
+  if (!isUsableComment(trimmed)) return false;
+  if (!isSubstantivePoint(input.point)) return false;
   if (input.kind === "grok" && !/@grok\b/i.test(trimmed)) return false;
   return true;
 }
@@ -198,12 +232,12 @@ export async function callSonnetHeatCheck(
         ...request.messages,
         {
           role: "assistant",
-          content: `Previous kind: ${result.kind}\nPrevious comment: ${result.comment}`,
+          content: `Previous kind: ${result.kind}\nPrevious point: ${result.point}\nPrevious comment: ${result.comment}`,
         },
         {
           role: "user",
           content:
-            "That comment is not postable. Write it again: under 280 characters including spaces, and if the kind is grok it must contain @grok. Keep the same reading of the post.",
+            `That comment is not postable. Write it again: ${COMMENT_MAX} characters or fewer including spaces, with \`point\` naming the specific thing it adds that the post does not already say, and if the kind is grok it must contain @grok. Keep the same reading of the post.`,
         },
       ],
     });
@@ -217,6 +251,9 @@ export async function callSonnetHeatCheck(
     comment: result.comment.trim(),
     kind: result.kind,
     why: result.why.trim(),
+    point: result.point.trim(),
+    // A grok comment never carries one, whatever the model returned.
+    cta: result.kind === "grok" ? null : cleanCta(result.cta),
   };
 }
 
@@ -231,6 +268,8 @@ export function buildMockHeatCheckRead(tweet: FetchedTweet): HeatCheckRead {
   return {
     kind,
     why: "Mock read — set ANTHROPIC_API_KEY to have Sonnet read this post.",
+    point: "Mock point — what a real comment would add to this thread.",
+    cta: kind === "grok" ? null : "Want the mock process? Reply and I'll send it.",
     comment:
       kind === "grok"
         ? `[Mock] @grok is this actually true for "${snippet}"?`
