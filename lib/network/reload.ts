@@ -5,6 +5,7 @@ import {
   callHaikuFeedReply,
   type ReplyTarget,
 } from "@/lib/anthropic/feedReply";
+import { pickOnTerritory } from "@/lib/anthropic/onTerritory";
 import type { FeedCard, NetworkStack } from "@/lib/network/stack";
 
 // What Reload means, in one place.
@@ -42,6 +43,10 @@ export type ReloadSummary = {
   written: number;
   reused: number;
   failed: number;
+  // How many of the written replies were judged to be about the founder's
+  // own field, and so were written with the Brand Pack's agenda in hand.
+  // Everything else was written voice-only.
+  onTerritory: number;
   // True when the budget, not the work, is what ended the run — the UI
   // says so rather than leaving unexplained cards without replies.
   budgetReached: boolean;
@@ -91,10 +96,11 @@ async function writeReply(
   userId: string,
   brandPack: BrandPackRow,
   card: FeedCard,
+  onTerritory: boolean,
 ): Promise<string | null> {
   try {
     const reply = process.env.ANTHROPIC_API_KEY
-      ? await callHaikuFeedReply(brandPack, toTarget(card))
+      ? await callHaikuFeedReply(brandPack, toTarget(card), onTerritory)
       : buildMockFeedReply(toTarget(card));
 
     const writtenAt = new Date().toISOString();
@@ -134,6 +140,7 @@ export async function writeReloadReplies(
     written: 0,
     reused: 0,
     failed: 0,
+    onTerritory: 0,
     budgetReached: false,
   };
 
@@ -148,16 +155,33 @@ export async function writeReloadReplies(
     }
   }
 
+  // One pass over the whole batch decides which posts are actually about
+  // the founder's field, before any reply is written. Only those few see
+  // the agenda; the rest are written voice-only and cannot lean anywhere.
+  const onTerritory = await pickOnTerritory(
+    brandPack,
+    needsReply.map((card) => ({
+      id: card.id,
+      handle: card.handle,
+      content: card.content,
+    })),
+  );
+
   const replies = new Map<string, string>();
   for (let i = 0; i < needsReply.length; i += REPLY_CONCURRENCY) {
     const batch = needsReply.slice(i, i + REPLY_CONCURRENCY);
     const written = await Promise.all(
-      batch.map((card) => writeReply(supabase, userId, brandPack, card)),
+      batch.map((card) =>
+        writeReply(supabase, userId, brandPack, card, onTerritory.has(card.id)),
+      ),
     );
     written.forEach((reply, index) => {
       if (reply) {
         replies.set(batch[index].id, reply);
         summary.written += 1;
+        // Counted on the way out, not from the gate's picks: a card the
+        // gate chose but the model failed on is not a reply you got.
+        if (onTerritory.has(batch[index].id)) summary.onTerritory += 1;
       } else {
         summary.failed += 1;
       }

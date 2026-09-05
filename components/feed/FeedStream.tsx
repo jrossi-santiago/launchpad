@@ -26,6 +26,7 @@ type ReloadSummary = {
   written: number;
   reused: number;
   failed: number;
+  onTerritory: number;
   budgetReached: boolean;
 };
 
@@ -49,6 +50,15 @@ function describeReload(summary: ReloadSummary, mode: ReloadMode): string {
   }
   if (summary.reused > 0) parts.push(`${summary.reused} already had one`);
   if (summary.failed > 0) parts.push(`${summary.failed} couldn't be written`);
+  // Says the quiet part: almost everything was written as a person
+  // talking, and only these few had your own field in hand.
+  if (summary.written > 0) {
+    parts.push(
+      summary.onTerritory > 0
+        ? `${summary.onTerritory} on your field`
+        : "none needed your field",
+    );
+  }
   if (parts.length === 0) return "Pulled the newest posts. Nothing needed a new reply.";
 
   const tail = summary.budgetReached

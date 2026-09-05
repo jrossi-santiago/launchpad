@@ -57,6 +57,22 @@ const SAVE_REPLY_TOOL = {
 // prompt asks for that person, and bans the tics of the other one by
 // name: openers that grade the post, restating what was just said, and
 // the little lecture that follows.
+//
+// The third mechanism is what the model is not shown. The Brand Pack
+// holds two different things: a voice (how this person talks) and an
+// agenda (what they sell, who they want to reach). Sending both on every
+// call is what made every reply carry a slant — hand a model a business
+// summary and an ICP and it treats them as the job, finding the path from
+// any post back to the founder's territory, twenty times out of twenty.
+// A real person who knows a subject talks about their own corner of it
+// maybe one time in six.
+//
+// So `on_territory` decides what goes in the request. Off — the default
+// for almost every card — positioning and ICP are simply absent, and a
+// reply cannot steer towards a territory it was never told about. On, for
+// the few posts a first pass judged genuinely adjacent, they are included
+// and the prompt says how to use them: as things this person knows, never
+// as things they sell.
 const SYSTEM_PROMPT = [
   "You write X (Twitter) replies for a founder, in their own voice, from their Brand Pack.",
   "You are given one post. Write one reply to that post.",
@@ -81,27 +97,63 @@ const SYSTEM_PROMPT = [
   "It must read like a person typing a quick reply on their phone. One or two sentences, and it is fine if it does not wrap up neatly. Lowercase is fine if the voice notes suggest it.",
   "It MUST fit 280 characters including spaces and punctuation — tighten the wording rather than truncate.",
   "The founder's voice guardrails ('never say') override everything above.",
-].join("\n");
+];
+
+// Almost every reply. There is no agenda in the request to steer towards,
+// and this says out loud that there is nowhere to get to — a model with
+// no goal will otherwise invent one to be useful.
+const OFF_TERRITORY_PROMPT = [
+  "",
+  "This reply is not going anywhere. You are in this thread because the subject is interesting, and that is the entire reason.",
+  "You are not steering towards a topic, not working towards a point about your own field, and not leaving a door open to one. React to what they actually said, and stop.",
+  "It is fine for this reply to be small. 'ha, the second one gets me every time' is a real reply. Not every reply has to earn its keep.",
+];
+
+// The few posts a first pass judged genuinely adjacent to what this
+// founder works on. The agenda is in the request for these, so the prompt
+// has to say what it is for — knowing the field, not selling in it.
+const ON_TERRITORY_PROMPT = [
+  "",
+  "This post is genuinely about what the founder works on, so what they know is worth bringing.",
+  "Let it show in the substance: the thing you only know from doing this, the distinction that matters, the trap people fall into. Positioning and ICP are given to you as context for what this person understands — never as something to work into the reply.",
+  "It still must not be a pitch. No product name, no link, no 'we built this', no 'that is exactly what we solve', no offer to help, no DM.",
+  "Knowing the subject is what earns attention here. Talking about your company is what loses it.",
+];
+
+function systemPrompt(onTerritory: boolean): string {
+  return [
+    ...SYSTEM_PROMPT,
+    ...(onTerritory ? ON_TERRITORY_PROMPT : OFF_TERRITORY_PROMPT),
+  ].join("\n");
+}
 
 export function buildFeedReplyRequest(
   brandPack: BrandPackRow,
   target: ReplyTarget,
+  onTerritory = false,
 ) {
   return {
     model: "claude-haiku-4-5-20251001",
     max_tokens: 512,
-    system: SYSTEM_PROMPT,
+    system: systemPrompt(onTerritory),
     messages: [
       {
         role: "user",
         content: JSON.stringify({
-          positioning: brandPack.business_summary,
-          icp: brandPack.icp,
+          // The voice half of the Brand Pack, on every call: this is how
+          // the person talks, and it is needed whatever they talk about.
           voice_notes: brandPack.voice_notes,
           // The templates are shown to the model as voice samples, not as
           // text to reuse: a Reload that handed back a template would be
           // the generic reply this feature replaces.
           voice_samples: brandPack.reply_templates,
+          // The agenda half, and only when the post is actually about it.
+          // Spread rather than set to null, so an off-territory request
+          // does not carry the keys at all — a model shown `icp: null`
+          // still knows an ICP is a thing it is meant to have.
+          ...(onTerritory
+            ? { positioning: brandPack.business_summary, icp: brandPack.icp }
+            : {}),
           post: {
             author: `@${target.handle}`,
             author_name: target.display_name,
@@ -200,9 +252,10 @@ async function requestReply(body: unknown): Promise<ReplyToolInput> {
 export async function callHaikuFeedReply(
   brandPack: BrandPackRow,
   target: ReplyTarget,
+  onTerritory = false,
 ): Promise<string> {
   const postText = [target.content ?? "", target.quoted?.text ?? ""].join(" ");
-  const request = buildFeedReplyRequest(brandPack, target);
+  const request = buildFeedReplyRequest(brandPack, target, onTerritory);
   let result = await requestReply(request);
 
   if (!isGroundedReply(result.reply, result.hook, postText)) {
