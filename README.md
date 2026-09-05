@@ -1,4 +1,4 @@
-# Launchpad
+# HeatCheck
 
 Find your next customers on X, before your competitors do.
 
@@ -211,7 +211,7 @@ posts between two visits, the oldest of them never reach your stack.
 
 ## X integration: reads vs. writes
 
-Launchpad talks to X through two providers, split by what the call does:
+HeatCheck talks to X through two providers, split by what the call does:
 
 | | Provider | Why |
 | --- | --- | --- |
@@ -255,7 +255,7 @@ self-serve plan (Free, Basic, Pro, Pay-Per-Use): an app may only reply to
 a post whose author @mentioned or quoted it, which is never true for cold
 outreach. Only Enterprise and Public Utility apps are exempt.
 
-So for an officially connected account, Launchpad drafts the reply and
+So for an officially connected account, HeatCheck drafts the reply and
 you send it. **Copy & Post** copies the draft and opens
 `x.com/intent/tweet?in_reply_to=<id>&text=<draft>` in a new tab — X's own
 reply composer, already filled in — so sending is one click there and

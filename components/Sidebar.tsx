@@ -28,7 +28,7 @@ export function Sidebar({
     <aside className="hidden h-full w-64 shrink-0 flex-col md:flex border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
       <div className="px-5 py-6">
         <span className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-          Launchpad
+          HeatCheck
         </span>
       </div>
 

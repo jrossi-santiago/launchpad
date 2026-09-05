@@ -54,7 +54,7 @@ export default function LoginPage() {
           href="/"
           className="mb-6 inline-block text-sm font-medium text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50"
         >
-          ← Launchpad
+          ← HeatCheck
         </Link>
         <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">
           Sign in

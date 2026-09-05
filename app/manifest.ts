@@ -1,13 +1,13 @@
 import type { MetadataRoute } from "next";
 
-// Makes Launchpad installable to a phone's home screen. `standalone` is
+// Makes HeatCheck installable to a phone's home screen. `standalone` is
 // the point of it: opened from the home screen there is no browser chrome,
 // no address bar eating 60px of a 620px screen, and the bottom tab bar
 // sits where a native app's would.
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Launchpad",
-    short_name: "Launchpad",
+    name: "HeatCheck",
+    short_name: "HeatCheck",
     description: "Find your next customers on X, before your competitors do.",
     start_url: "/feed",
     display: "standalone",
