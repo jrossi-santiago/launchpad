@@ -153,6 +153,46 @@ Feed actions, in the order the thumb reaches them:
   visit still polls without it, so the 3-minute poll TTL keeps re-opening
   the tab free.
 
+### Reload arrives in pieces
+
+Reload is a poll of every watched account followed by up to
+`RELOAD_REPLY_BUDGET` (30) model calls, and it used to be one request that
+returned one object — so the Feed showed a spinner for as long as thirty
+replies take, and then everything at once. The work is the same length;
+what changed is that nothing waits for the end of it.
+
+`POST /api/feed/reload` streams newline-delimited JSON (`ReloadEvent` in
+`lib/network/reload.ts`, read by `readNdjson()`):
+
+- **`feed`**, once, as soon as the posts are pulled and before the first
+  model call — every card, plus the ids of the ones a reply is coming for.
+  This is the event that ends the wait: the posts are readable from here.
+- **`reply`**, one per card, as each finishes. A decline or a failure
+  arrives here too; settled is settled.
+- **`done`**, with the summary and the refreshed allowance.
+- **`error`**, terminal. The refusals that happen before the sweep starts
+  — no Brand Pack, no allowance, no session — are still ordinary JSON with
+  a status code, because nothing has been streamed yet.
+
+Two things follow from streaming that are worth knowing:
+
+- **The order is decided once, up front.** `sortFeedForSweep()` ranks a
+  card queued for a reply as though it already has one, because in a few
+  seconds it will. Sorting again at the end would be more accurate and
+  much worse: by then somebody is reading, and cards moving under a thumb
+  mid-read is not a fix.
+- **A closed tab does not stop the sweep.** Every reply is written to
+  `network_tweets` before it is sent, so an abandoned Reload is unwatched,
+  not wasted.
+
+Replies are written eight at a time (`REPLY_CONCURRENCY`) from a pool
+rather than four at a time in waves — a wave runs at the speed of its
+slowest member, and the slow member is usually a card paying for its one
+corrective retry. What makes eight safe is `lib/anthropic/client.ts`,
+which is where every Messages call the sweep makes now goes: it retries
+429s, 408s and 5xx with jittered backoff, honours `retry-after`, and gives
+up after three attempts rather than holding a card open forever.
+
 ### Commenter — Queue
 
 The posts you kept, each with the three Haiku reply drafts written for it,

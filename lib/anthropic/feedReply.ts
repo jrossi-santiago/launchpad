@@ -1,4 +1,5 @@
 import type { BrandPackRow } from "@/lib/anthropic/brandPack";
+import { anthropicMessages, toolInput } from "@/lib/anthropic/client";
 import {
   BREVITY_RULES,
   COMMENT_MAX,
@@ -379,41 +380,19 @@ function isSubstantiveAbout(about: string): boolean {
   return about.trim().split(/\s+/).length >= 6;
 }
 
+// Eight of these run at once during a sweep, so the rate limiter is an
+// ordinary part of the day rather than an outage — the backoff that makes
+// that survivable lives in lib/anthropic/client.ts.
 async function requestReply(body: unknown): Promise<ReplyToolInput> {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": process.env.ANTHROPIC_API_KEY!,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+  const input = toolInput(await anthropicMessages(body), "save_reply");
 
-  if (!response.ok) {
-    const errorBody = await response.text().catch(() => "");
-    throw new Error(
-      `Anthropic API responded with ${response.status}: ${errorBody}`,
-    );
-  }
-
-  const data = await response.json();
-  const content: unknown[] = Array.isArray(data?.content) ? data.content : [];
-  const toolUse = content.find(
-    (block): block is { type: "tool_use"; name: string; input: unknown } =>
-      typeof block === "object" &&
-      block !== null &&
-      (block as { type?: unknown }).type === "tool_use" &&
-      (block as { name?: unknown }).name === "save_reply",
-  );
-
-  if (!toolUse || !isReplyToolInput(toolUse.input)) {
+  if (!isReplyToolInput(input)) {
     throw new Error(
       "Anthropic response did not include a valid save_reply tool call.",
     );
   }
 
-  return toolUse.input;
+  return input;
 }
 
 // Returns the reply and what the model made of the post, or throws.
