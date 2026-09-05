@@ -185,6 +185,38 @@ Two things follow from streaming that are worth knowing:
   `network_tweets` before it is sent, so an abandoned Reload is unwatched,
   not wasted.
 
+### Two drafts, one call
+
+Every reply the sweep writes is checked against the shape it claimed —
+an operator add-on carrying no figure, a receipts story that happened to
+nobody, a `why_specific` that says "it is relevant to the topic". A reply
+that fails one of those used to earn a corrective retry: a second full
+round trip, on a card holding up one of eight lanes.
+
+So `save_reply` now returns **two** replies rather than one, best first,
+in different shapes. The checks run over them in order and the first
+usable one is sent — which keeps the ranking (`operator` beats
+`receipts`, either beats `counterpoint` or `question`), because the model
+was asked for its best reply first. The second is a real reply of a
+different kind, not a variation on the first: different `comment_type`,
+different `point`, and it must stand on its own.
+
+A model that fails a mechanical shape check has usually written a fine
+reply of a different kind. Asking for that kind up front costs a few
+dozen output tokens; asking for it afterwards costs a whole round trip.
+
+The corrective retry is still there and still one, but it now fires when
+*both* drafts fail — a much stronger signal — and it is told exactly what
+was wrong with each, rather than "that did not work". Both failing twice
+is a decline, which is a correct answer.
+
+Whether the spare draft earns its tokens is a question the data answers
+rather than the design: `ReloadSummary` counts `alternate` (replies that
+came from the second draft — each one a round trip saved) and `retried`
+(cards that needed the extra call anyway), and both land in the
+`usage_events` row every Reload writes. A sweep where `alternate` sits
+near zero is a sweep paying for a spare it never uses.
+
 Replies are written eight at a time (`REPLY_CONCURRENCY`) from a pool
 rather than four at a time in waves — a wave runs at the speed of its
 slowest member, and the slow member is usually a card paying for its one
