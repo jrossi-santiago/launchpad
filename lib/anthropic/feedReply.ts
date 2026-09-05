@@ -1,5 +1,5 @@
 import type { BrandPackRow } from "@/lib/anthropic/brandPack";
-import type { QuotedPost } from "@/lib/getx/userTweets";
+import type { PostContext, QuotedPost } from "@/lib/getx/userTweets";
 
 // One reply, written for one post, for the Feed's Reload button.
 //
@@ -15,8 +15,14 @@ import type { QuotedPost } from "@/lib/getx/userTweets";
 export type ReplyTarget = {
   handle: string;
   display_name: string | null;
+  // Who is posting. Half of what a fragment means is who said it — the
+  // same sentence from a founder, a researcher and a comedian are three
+  // different posts.
+  bio: string | null;
   content: string | null;
   quoted: QuotedPost | null;
+  // What the post links to and shows, when it does.
+  context: PostContext | null;
 };
 
 const SAVE_REPLY_TOOL = {
@@ -121,7 +127,8 @@ const SYSTEM_PROMPT = [
   "",
   "Before any of that: work out what the post is actually about, and say so in `about`. Name the real subject — the tool, the claim, the event, the argument — the way you would explain it to someone who had not seen it. If you cannot name it, you have not understood it.",
   "",
-  "You are often missing things. A post's link is a bare t.co you cannot open. Its image you cannot see. It may turn on a person, product, in-joke or piece of news you do not know. Put every one of those in `unclear`.",
+  "You are often missing things, and the post tells you which. `links` are pages you cannot open — you know a link is there and nothing about what is on the page. `media` counts images or video you cannot see; `media_alt` is the only description you will ever get of one, and is usually empty. A post may also turn on a person, product, in-joke or piece of news you do not know. Put every one of those in `unclear`.",
+  "A post whose words lean on something you cannot see — 'this is wild', 'read this', 'look at the third one' — is a post you do not have. Say so; do not reconstruct what was probably in it.",
   "",
   "Then be honest in `can_reply`. It is true only if you could reply as someone who genuinely follows this. Set it false — and leave `reply` empty — when:",
   "- the post's point depends on a link or image you were not given",
@@ -190,10 +197,26 @@ export function buildFeedReplyRequest(
           post: {
             author: `@${target.handle}`,
             author_name: target.display_name,
+            author_bio: target.bio,
             text: target.content,
             quoting: target.quoted
               ? { author: `@${target.quoted.handle}`, text: target.quoted.text }
               : null,
+            // Named for what they are from where the model sits: things
+            // attached to this post that it cannot open or see. Absent
+            // when the post is only words, so their presence means
+            // something is genuinely missing.
+            ...(target.context?.links.length
+              ? { links_you_cannot_open: target.context.links }
+              : {}),
+            ...(target.context?.media
+              ? {
+                  images_you_cannot_see: target.context.media,
+                  image_descriptions: target.context.media_alt.length
+                    ? target.context.media_alt
+                    : undefined,
+                }
+              : {}),
           },
         }),
       },

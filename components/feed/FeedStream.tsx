@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isFreshReply, newestReplyAt, type FeedCard } from "@/lib/network/stack";
+import { isFreshReply, newestSweepId, type FeedCard } from "@/lib/network/stack";
 import { copyAndOpenReply } from "@/lib/x/intent";
 import { formatAge } from "@/components/network/NetworkCard";
 import {
@@ -344,9 +344,9 @@ export function FeedStream({
   }
 
   const visible = feed.filter((card) => cardStates[card.id] !== "gone");
-  // The same anchor the server sorted on, so a card's label can never
+  // The same sweep the server sorted on, so a card's label can never
   // disagree with the band it was put in.
-  const replyAnchor = newestReplyAt(visible);
+  const currentSweep = newestSweepId(visible);
 
   return (
     <div
@@ -519,7 +519,7 @@ export function FeedStream({
                 {card.suggested_reply ? (
                   <div
                     className={`flex flex-col gap-2 rounded-xl border p-3 ${
-                      isFreshReply(card, replyAnchor)
+                      isFreshReply(card, currentSweep)
                         ? "border-emerald-200 bg-emerald-50/70 dark:border-emerald-900 dark:bg-emerald-950/30"
                         : // Carried over from an earlier sweep. Still a
                           // usable reply, so it keeps its block — just
@@ -529,18 +529,18 @@ export function FeedStream({
                   >
                     <span
                       className={`text-[10px] font-medium tracking-wider uppercase ${
-                        isFreshReply(card, replyAnchor)
+                        isFreshReply(card, currentSweep)
                           ? "text-emerald-700 dark:text-emerald-300"
                           : "text-zinc-400 dark:text-zinc-500"
                       }`}
                     >
-                      {isFreshReply(card, replyAnchor)
+                      {isFreshReply(card, currentSweep)
                         ? "Written for this post"
                         : `Old · written ${formatAge(card.suggested_reply_at)} ago`}
                     </span>
                     <p
                       className={`text-sm leading-relaxed whitespace-pre-wrap ${
-                        isFreshReply(card, replyAnchor)
+                        isFreshReply(card, currentSweep)
                           ? "text-emerald-900 dark:text-emerald-100"
                           : "text-zinc-700 dark:text-zinc-300"
                       }`}
@@ -551,7 +551,7 @@ export function FeedStream({
                       type="button"
                       onClick={() => sendSuggested(card)}
                       className={`min-h-11 rounded-full px-4 text-sm font-medium transition-colors ${
-                        isFreshReply(card, replyAnchor)
+                        isFreshReply(card, currentSweep)
                           ? "bg-emerald-700 text-white hover:bg-emerald-800 dark:bg-emerald-600 dark:hover:bg-emerald-500"
                           : "border border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
                       }`}
