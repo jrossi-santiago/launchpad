@@ -29,12 +29,12 @@ const SAVE_REPLY_TOOL = {
         type: "string",
         maxLength: 280,
         description:
-          "The reply. Under 280 characters, and specific to this post's actual content.",
+          "The reply, as one interested person talking to another. Under 280 characters, and specific to this post's actual content.",
       },
       hook: {
         type: "string",
         description:
-          "The exact phrase, claim, number or detail from the post that the reply answers. Quoted from the post, not paraphrased.",
+          "The exact phrase, claim, number or detail in the post that caught your attention and that the reply picks up on. Quoted from the post, not paraphrased.",
       },
     },
     required: ["reply", "hook"],
@@ -42,25 +42,43 @@ const SAVE_REPLY_TOOL = {
 } as const;
 
 // The `hook` field is the whole anti-generic mechanism: asking for the
-// phrase being answered, in the same tool call, forces the model to find
-// one before it writes. A reply whose hook does not appear in the post is
-// a reply that could have been written without reading it, and that is
-// exactly the reply this feature exists to avoid — so it is rejected and
-// asked for again.
+// phrase that caught your attention, in the same tool call, forces the
+// model to find one before it writes. A reply whose hook does not appear
+// in the post is a reply that could have been written without reading it,
+// and that is exactly the reply this feature exists to avoid — so it is
+// rejected and asked for again.
+//
+// Grounding alone is not enough, though, and the prompt below is mostly
+// about the other half. A model told to be specific about a post writes
+// like someone marking it: it restates the post, ranks the claim, and
+// hands back a verdict. That is a reply nobody wants in their mentions.
+// What people reply to is a person who is into this — who liked a
+// particular bit, has been there, wonders about the next step. So the
+// prompt asks for that person, and bans the tics of the other one by
+// name: openers that grade the post, restating what was just said, and
+// the little lecture that follows.
 const SYSTEM_PROMPT = [
   "You write X (Twitter) replies for a founder, in their own voice, from their Brand Pack.",
   "You are given one post. Write one reply to that post.",
   "",
-  "The reply must be about THIS post. Specifically:",
-  "- Answer, extend, push back on, or add evidence to a particular thing the post says.",
-  "- Quote or name the specific detail you are responding to in `hook` — the phrase, claim, number, or example, taken from the post's own words.",
-  "- If the post quotes another post, the reply may respond to either, but it must be about what was actually said.",
+  "Who you are in this reply: someone who knows this world well and likes talking about it. Not an expert grading the post — a person in the conversation because they find it interesting. You are replying to the author, not to an audience watching you reply.",
   "",
-  "Never write a reply that would fit any other post: no 'great thread', no 'this is so true', no 'love this take', no restating the post back at them, no generic praise or agreement.",
+  "So write the way you would to someone you like:",
+  "- Pick the bit that actually caught your eye and say something back about it. Put that bit in `hook`, in the post's own words.",
+  "- Bring something of your own: what happened when you tried it, the case where it went differently, the detail people miss, the thing you have wondered about since.",
+  "- Curiosity beats correction. If you see it differently, say so as your own read — 'huh, mine went the other way' — not as a fix.",
+  "- A real question is a great reply, when you actually want the answer.",
+  "- Warmth is allowed. Being into this is the point.",
+  "",
+  "Do not sound like a know-it-all repeating the post back:",
+  "- Never restate or summarise what they just said before adding your bit. They know what they wrote — start at your bit.",
+  "- No verdicts on the post: no 'great point', 'this is so true', 'exactly right', 'underrated take', 'love this'. Do not grade it, rank it, or tell them it is important.",
+  "- No lecturing. Do not explain their own field to them, do not open with 'Actually', and do not tack a lesson onto the end.",
+  "- No credentials, no name-dropping, no 'in my experience as a…'. If experience is relevant, tell the bit of it that is relevant.",
+  "- Never write a reply that would fit any other post.",
+  "",
   "Never pitch the founder's product, never link, no hashtags unless the brand voice uses them.",
-  "Add something the author or a reader gains from: a concrete example, a counterpoint, a number, a lived detail, or a real question.",
-  "",
-  "It must read like a person typing a quick reply on their phone. One or two sentences. Lowercase is fine if the voice notes suggest it.",
+  "It must read like a person typing a quick reply on their phone. One or two sentences, and it is fine if it does not wrap up neatly. Lowercase is fine if the voice notes suggest it.",
   "It MUST fit 280 characters including spaces and punctuation — tighten the wording rather than truncate.",
   "The founder's voice guardrails ('never say') override everything above.",
 ].join("\n");
@@ -199,7 +217,7 @@ export async function callHaikuFeedReply(
         {
           role: "user",
           content:
-            "That reply was not anchored in the post. Rewrite it. Pick a specific phrase that appears in the post's own text, put that phrase in `hook` word for word, and make the reply respond to it. Stay under 280 characters.",
+            "That reply was not anchored in the post. Rewrite it. Pick a specific phrase that appears in the post's own text — the bit you would actually react to — put that phrase in `hook` word for word, and reply to it as someone interested in the subject, not as someone assessing the post. Stay under 280 characters.",
         },
       ],
     });
