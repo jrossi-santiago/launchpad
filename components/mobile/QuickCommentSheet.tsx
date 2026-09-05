@@ -21,6 +21,48 @@ export type QuickTarget = {
   suggestion?: string | null;
   suggestionCta?: string | null;
   suggestionType?: unknown;
+  // What the model said it could not tell about this post, when it read
+  // it and declined. It is the seed for the three write-one buttons: on
+  // "I'll fill the gap" it is the question the founder is answering, so
+  // the sheet shows it rather than making them remember it.
+  unclear?: string | null;
+};
+
+// One comment written on demand for a post the model declined, and the
+// state of writing it.
+//
+// The three buttons live on the card, in the amber block that says the
+// post was read and not answered. The result lands here, because the
+// sheet is already the place a comment is read, edited, CTA'd and sent —
+// duplicating that furniture on the card would mean maintaining two
+// review surfaces that must agree.
+//
+// `note` is the state "I'll fill the gap" opens in: nothing has been
+// written yet, and nothing will be until the founder types the piece the
+// model was missing.
+export type AssistMode = "grok" | "ask" | "steer";
+
+export type AssistState = {
+  mode: AssistMode;
+  state: "note" | "working" | "ready" | "failed";
+  text: string;
+  type: unknown;
+  error: string | null;
+};
+
+const ASSIST_LABELS: Record<AssistMode, { title: string; working: string }> = {
+  grok: {
+    title: "@grok question",
+    working: "Writing a question for Grok…",
+  },
+  ask: {
+    title: "Question for the author",
+    working: "Writing the question…",
+  },
+  steer: {
+    title: "Written from what you told it",
+    working: "Writing it with your note…",
+  },
 };
 
 export type QuickDraft = {
@@ -88,6 +130,140 @@ function Comment({
   );
 }
 
+// The write-one panel: the note box, the wait, and the comment that comes
+// back — editable before it goes anywhere.
+//
+// Editable is the point of routing the result here. The three buttons
+// exist because the founder knows something the model does not, and a
+// comment written from a one-line note is a first draft of what they
+// would have typed themselves. Handing it back as read-only text would
+// make them retype it in X to fix one word; handing it back in a box
+// means the last edit is theirs and the copy button copies what they can
+// see.
+function AssistPanel({
+  assist,
+  unclear,
+  onRun,
+  onSend,
+  sent,
+}: {
+  assist: AssistState;
+  unclear: string | null;
+  onRun: (note: string | null) => void;
+  onSend: (text: string) => void;
+  sent: (text: string) => boolean;
+}) {
+  const labels = ASSIST_LABELS[assist.mode];
+  const [note, setNote] = useState("");
+  // Seeded from the model and owned by the founder from the first
+  // keystroke. The panel is keyed on the text it came back with, so a
+  // Try again remounts it with the new comment rather than leaving the
+  // previous attempt sitting in an edited box.
+  const [text, setText] = useState(assist.text);
+
+  if (assist.state === "note") {
+    return (
+      <div className="flex flex-col gap-2 rounded-xl border border-zinc-300 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-950/50">
+        <span className="text-[10px] font-medium tracking-wider text-zinc-500 uppercase dark:text-zinc-400">
+          Tell it what it was missing
+        </span>
+        {unclear ? (
+          <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+            It said: {unclear}
+          </p>
+        ) : null}
+        <textarea
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          rows={3}
+          maxLength={400}
+          autoFocus
+          placeholder="What is this actually about? e.g. “this is his funding announcement — we shipped the same integration last year and it took 6 weeks”"
+          className="w-full rounded-lg border border-zinc-300 bg-white p-2.5 text-sm leading-relaxed text-zinc-800 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+        />
+        <button
+          type="button"
+          onClick={() => onRun(note.trim())}
+          disabled={note.trim().length === 0}
+          className="min-h-11 rounded-full bg-zinc-900 px-4 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
+        >
+          Write it from that
+        </button>
+      </div>
+    );
+  }
+
+  if (assist.state === "working") {
+    return (
+      <p className="flex items-center gap-2 rounded-xl border border-dashed border-zinc-300 p-3 text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
+        <span
+          aria-hidden
+          className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent"
+        />
+        {labels.working}
+      </p>
+    );
+  }
+
+  if (assist.state === "failed") {
+    return (
+      <div className="flex flex-col gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/40">
+        <p className="text-sm text-amber-800 dark:text-amber-200">
+          {assist.error ?? "Couldn't write that one."}
+        </p>
+        <button
+          type="button"
+          onClick={() => onRun(null)}
+          className="min-h-11 self-start rounded-full border border-amber-300 px-4 text-sm font-medium text-amber-800 dark:border-amber-800 dark:text-amber-200"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 dark:border-emerald-900 dark:bg-emerald-950/30">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[10px] font-medium tracking-wider text-emerald-700 uppercase dark:text-emerald-300">
+          {labels.title}
+        </span>
+        <TypeChip type={assist.type} />
+        <span className="ml-auto text-[11px] text-emerald-700/70 dark:text-emerald-300/70">
+          {text.length} chars
+        </span>
+      </div>
+      <textarea
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        rows={3}
+        className="w-full rounded-lg border border-emerald-200 bg-white p-2.5 text-sm leading-relaxed text-zinc-800 dark:border-emerald-900 dark:bg-zinc-900 dark:text-zinc-100"
+      />
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onSend(text)}
+          disabled={text.trim().length === 0}
+          className="min-h-11 flex-1 rounded-full bg-emerald-700 px-4 text-sm font-medium text-white transition-colors hover:bg-emerald-800 disabled:opacity-50 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+        >
+          {sent(text) ? "Copied — finish in X ↗" : "Copy & open X ↗"}
+        </button>
+        <button
+          type="button"
+          // Null every time, including for "I'll fill the gap": the note
+          // is held by the Feed, not by this panel, precisely so it
+          // survives the remount that a new comment causes.
+          onClick={() => onRun(null)}
+          title="Write another one"
+          className="min-h-11 rounded-full border border-emerald-300 px-4 text-sm font-medium text-emerald-800 dark:border-emerald-800 dark:text-emerald-200"
+        >
+          Try again
+        </button>
+      </div>
+    </div>
+  );
+}
+
 type SheetProps = {
   target: QuickTarget | null;
   templates: string[];
@@ -97,6 +273,11 @@ type SheetProps = {
   onRequestDrafts: () => void;
   onMarkPosted: (draftId: string) => void;
   onClose: () => void;
+  // Null unless one of the card's three write-one buttons was pressed.
+  assist?: AssistState | null;
+  // Runs the write. The note is what the founder typed in "I'll fill the
+  // gap", and null for the two buttons that need nothing from them.
+  onAssist?: (note: string | null) => void;
 };
 
 // Mounted only while a post is open, and keyed on that post, so every bit
@@ -118,6 +299,8 @@ function SheetBody({
   onRequestDrafts,
   onMarkPosted,
   onClose,
+  assist = null,
+  onAssist,
 }: SheetProps & { target: QuickTarget }) {
   const [sentText, setSentText] = useState<string | null>(null);
   // Set when a draft (not a template) was handed to X, so there is a row
@@ -205,6 +388,20 @@ function SheetBody({
               Not yet
             </button>
           </div>
+        ) : null}
+
+        {assist && onAssist ? (
+          <AssistPanel
+            // Keyed on the comment that came back, so Try again gets a
+            // clean box rather than the previous attempt with the new
+            // text ignored behind an edit flag.
+            key={`${assist.mode}-${assist.state}-${assist.text}`}
+            assist={assist}
+            unclear={target.unclear ?? null}
+            onRun={(note) => onAssist(note)}
+            onSend={(text) => send(text, null)}
+            sent={wasSent}
+          />
         ) : null}
 
         {target.suggestion ? (

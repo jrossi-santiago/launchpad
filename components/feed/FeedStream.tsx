@@ -8,13 +8,60 @@ import { copyAndOpenReply, withCta } from "@/lib/x/intent";
 import { formatAge } from "@/components/network/NetworkCard";
 import {
   QuickCommentSheet,
+  type AssistMode,
+  type AssistState,
   type DraftsState,
   type QuickDraft,
   type QuickTarget,
 } from "@/components/mobile/QuickCommentSheet";
+import { isCommentType } from "@/lib/anthropic/commentTypes";
 
 // How far you have to drag the top of the stream down before it re-polls.
 const PULL_THRESHOLD = 70;
+
+// What a declined card offers instead of nothing.
+//
+// A decline means the model read the post and said it could not follow it
+// — a link it cannot open, an image it cannot see, a person it does not
+// know. That is the honest answer for a machine, and the wrong place for
+// the card to stop, because the person looking at it is very often the
+// one who does know what the post means. So the amber block gets three
+// buttons, and between them they cover the three ways out:
+//
+//   Ask @grok      — put the question to something that can open the
+//                    link, in public, in the thread. The gap gets filled
+//                    by Grok rather than by a guess.
+//   Ask the author — the gap is the question. Not understanding a post is
+//                    itself a reason to ask about it, and a real question
+//                    is one of the four comment types.
+//   I'll fill the  — you type the missing piece in one line and it writes
+//   gap              the comment from it. This is the one that makes any
+//                    post commentable, because it closes the exact gap
+//                    the model just named.
+//
+// Each is one model call and lands in the sheet to be read and edited
+// before anything is copied anywhere.
+const ASSIST_BUTTONS: {
+  mode: AssistMode;
+  label: string;
+  title: string;
+}[] = [
+  {
+    mode: "grok",
+    label: "Ask @grok",
+    title: "Tag @grok with a real question about this post, so it answers in the thread",
+  },
+  {
+    mode: "ask",
+    label: "Ask the author",
+    title: "Ask the poster the thing it couldn't work out for itself",
+  },
+  {
+    mode: "steer",
+    label: "I'll fill the gap",
+    title: "Tell it what it was missing, and it writes the comment from that",
+  },
+];
 
 type CardState = "live" | "liking" | "liked" | "gone";
 
@@ -106,6 +153,13 @@ export function FeedStream({
   const [pull, setPull] = useState(0);
 
   const [target, setTarget] = useState<QuickTarget | null>(null);
+  // The write-one panel, and the card it belongs to. Both live here
+  // rather than in the sheet: the note has to survive the panel
+  // remounting on every new comment, and the written comment has to go
+  // back onto the card in the stream behind it.
+  const [assist, setAssist] = useState<AssistState | null>(null);
+  const [assistCardId, setAssistCardId] = useState<string | null>(null);
+  const [assistNote, setAssistNote] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<QuickDraft[]>([]);
   const [draftsState, setDraftsState] = useState<DraftsState>("idle");
   const [draftsError, setDraftsError] = useState<string | null>(null);
@@ -303,10 +357,89 @@ export function FeedStream({
       suggestion: card.suggested_reply,
       suggestionCta: card.suggested_cta,
       suggestionType: card.reply_type,
+      // Why the model declined, carried into the sheet so "I'll fill the
+      // gap" can show the founder the question they are answering.
+      unclear: card.reply_unclear,
     });
     setDrafts([]);
     setDraftsState("idle");
     setDraftsError(null);
+    setAssist(null);
+    setAssistCardId(null);
+    setAssistNote(null);
+  }
+
+  // One of the three buttons on a declined card. The sheet opens first
+  // and the writing happens inside it, so there is one place a comment is
+  // read, edited and sent — the card behind never grows a second copy of
+  // that furniture.
+  //
+  // "I'll fill the gap" opens on the note box instead of a request: there
+  // is nothing to write until the founder has typed the missing piece.
+  function startAssist(card: FeedCard, mode: AssistMode) {
+    openSheet(card);
+    setAssistCardId(card.id);
+    setAssistNote(null);
+
+    if (mode === "steer") {
+      setAssist({ mode, state: "note", text: "", type: null, error: null });
+      return;
+    }
+
+    setAssist({ mode, state: "working", text: "", type: null, error: null });
+    void runAssist(card.id, mode, null);
+  }
+
+  // `note` is what the founder just typed, or null on a Try again — in
+  // which case the note they typed the first time is reused, which is the
+  // reason it is held out here rather than inside the panel that
+  // remounts on every new comment.
+  async function runAssist(cardId: string, mode: AssistMode, note: string | null) {
+    const useNote = note ?? assistNote;
+    if (note !== null) setAssistNote(note);
+    setAssist({ mode, state: "working", text: "", type: null, error: null });
+
+    try {
+      const response = await fetch("/api/feed/write-one", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ card_id: cardId, mode, note: useNote }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.error ?? "Couldn't write that one.");
+
+      const text = typeof body?.text === "string" ? body.text.trim() : "";
+      if (!text) throw new Error("Couldn't write that one.");
+      const type = isCommentType(body?.type) ? body.type : null;
+
+      setAssist({ mode, state: "ready", text, type, error: null });
+      // Onto the card too. The route has already written it to the row,
+      // so this is the stream catching up rather than a second source of
+      // truth: the amber "one for you to read" block goes away, and the
+      // comment is there when the sheet is closed.
+      setFeed((prev) =>
+        prev.map((item) =>
+          item.id === cardId
+            ? {
+                ...item,
+                suggested_reply: text,
+                suggested_reply_at: new Date().toISOString(),
+                suggested_cta: null,
+                reply_type: type,
+                reply_unclear: null,
+              }
+            : item,
+        ),
+      );
+    } catch (err) {
+      setAssist({
+        mode,
+        state: "failed",
+        text: "",
+        type: null,
+        error: err instanceof Error ? err.message : "Couldn't write that one.",
+      });
+    }
   }
 
   // Two fully-awaited requests, the same pair the desktop board
@@ -547,6 +680,23 @@ export function FeedStream({
                     <p className="text-sm leading-relaxed text-amber-900 dark:text-amber-100">
                       {card.reply_unclear}
                     </p>
+                    {/* You are the one who knows what this post means.
+                        Three ways to say so, one model call each, all of
+                        them landing in the sheet to be read and edited
+                        before anything is copied. */}
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {ASSIST_BUTTONS.map((button) => (
+                        <button
+                          key={button.mode}
+                          type="button"
+                          onClick={() => startAssist(card, button.mode)}
+                          title={button.title}
+                          className="min-h-11 rounded-full border border-amber-300 bg-white/70 px-3.5 text-xs font-medium text-amber-900 transition-colors hover:bg-white dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-100 dark:hover:bg-amber-900/50"
+                        >
+                          {button.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 ) : null}
 
@@ -682,7 +832,17 @@ export function FeedStream({
         draftsError={draftsError}
         onRequestDrafts={() => void handleRequestDrafts()}
         onMarkPosted={(draftId) => void handleMarkPosted(draftId)}
-        onClose={() => setTarget(null)}
+        assist={assist}
+        onAssist={(note) => {
+          if (!assistCardId || !assist) return;
+          void runAssist(assistCardId, assist.mode, note);
+        }}
+        onClose={() => {
+          setTarget(null);
+          setAssist(null);
+          setAssistCardId(null);
+          setAssistNote(null);
+        }}
       />
     </div>
   );

@@ -370,6 +370,29 @@ async function requestGrok(
     : question.trim();
 }
 
+// The @grok question on its own, for the Feed's declined cards.
+//
+// A card the model read and could not follow is the best possible place
+// for this: the reason it declined is usually a link it cannot open or an
+// image it cannot see, and Grok can do both — then answers publicly, in
+// the thread the founder's own reply would have gone in. So the button
+// exists on exactly the cards where the reply does not.
+//
+// It is the same generator the three-draft pack uses, retry and
+// validation included, rather than a second copy of the rules. What
+// differs is the price: one call instead of three, and no queue row.
+export async function callHaikuGrokQuestion(
+  brandPack: BrandPackRow,
+  tweet: TweetForDrafts,
+): Promise<string> {
+  return requestGrok(brandPack, tweet);
+}
+
+export function buildMockGrokQuestion(tweet: TweetForDrafts): string {
+  const author = tweet.author_handle ?? "them";
+  return `${GROK_HANDLE} [Mock] what is ${author} actually claiming here, and what is the strongest evidence either way?`;
+}
+
 // The two calls run together: they need different context, not different
 // timing, and one round trip of latency is what the sheet can afford.
 export async function callHaiku(
