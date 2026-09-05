@@ -9,7 +9,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "HeatCheck",
     short_name: "HeatCheck",
     description: "Find your next customers on X, before your competitors do.",
-    start_url: "/feed",
+    start_url: "/commenter",
     display: "standalone",
     background_color: "#18181b",
     theme_color: "#18181b",

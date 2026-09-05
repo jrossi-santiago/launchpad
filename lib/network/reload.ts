@@ -132,6 +132,9 @@ async function writeReply(
         // from a previous sweep would attach itself to a new comment it
         // was never written for.
         suggested_cta: result.reply ? result.cta : null,
+        // Which of the four comment types the reply is, so the card can
+        // say so. Null on a decline, same as the reply itself.
+        reply_type: result.commentType,
         reply_sweep_id: sweepId,
         reply_about: result.about,
         // Only kept when it is the reason there is no reply. On a card
@@ -247,6 +250,7 @@ export async function writeReloadReplies(
             suggested_reply: result.reply,
             suggested_reply_at: new Date().toISOString(),
             suggested_cta: result.reply ? result.cta : null,
+            reply_type: result.commentType,
             reply_sweep_id: sweepId,
             reply_about: result.about,
             reply_unclear: result.reply ? null : (result.unclear ?? "No reason given."),

@@ -535,9 +535,8 @@ export function LaunchpadQueue({
             No tweets in your queue yet.
           </p>
           <p className="max-w-sm text-sm text-zinc-500 dark:text-zinc-400">
-            Paste a tweet URL or ID above to add one, or pull high-engagement
-            posts in from Radar —{" "}
-            <span className="font-medium">coming soon</span>.
+            Paste a tweet URL or ID above to add one, or send posts here
+            from the Feed and from HeatCheck.
           </p>
         </div>
       ) : (

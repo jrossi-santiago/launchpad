@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { TweetRow } from "@/lib/getx/tweet";
 import type { DraftRow } from "@/lib/anthropic/drafts";
 import { copyAndOpenReply, withCta } from "@/lib/x/intent";
+import { TypeChip } from "@/components/comment/TypeChip";
 import { CtaToggle } from "@/components/comment/CtaToggle";
 
 // Mirrors GROK_VARIANT in lib/anthropic/drafts.ts. Kept local so this client
@@ -301,7 +302,12 @@ export function TweetCard({
                     >
                       Ask @grok
                     </span>
-                  ) : null}
+                  ) : (
+                    // The two reply drafts are deliberately two different
+                    // shapes, so the choice between them is a choice
+                    // between kinds of comment, not two wordings.
+                    <TypeChip type={draft.draft_type} />
+                  )}
                   <p className="flex-1 text-sm text-zinc-800 dark:text-zinc-200">
                     {draft.draft_text}
                   </p>

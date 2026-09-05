@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { TypeChip } from "@/components/comment/TypeChip";
 import { CtaToggle } from "@/components/comment/CtaToggle";
 import { copyAndOpenReply, withCta } from "@/lib/x/intent";
 
 export type QuickTarget = {
   // The post being replied to. `cardId` is set when it came from the Feed,
-  // `fetched` when it came from Explore — whichever it is, that's what
+  // `fetched` when it was looked up by id — whichever it is, that's what
   // "Draft replies for this post" needs to put it in the queue.
   xTweetId: string;
   authorHandle: string;
@@ -19,9 +20,17 @@ export type QuickTarget = {
   // ask on works the same here as it does on the card.
   suggestion?: string | null;
   suggestionCta?: string | null;
+  suggestionType?: unknown;
 };
 
-export type QuickDraft = { id: string; text: string; cta: string | null };
+export type QuickDraft = {
+  id: string;
+  text: string;
+  cta: string | null;
+  // Which of the four comment types this draft is, when it has one. The
+  // @grok draft does not.
+  type?: unknown;
+};
 
 export type DraftsState = "idle" | "working" | "ready" | "failed";
 
@@ -33,6 +42,7 @@ function Comment({
   text,
   cta,
   source,
+  type,
   onSend,
   sent,
 }: {
@@ -40,6 +50,9 @@ function Comment({
   // Null on templates and on the @grok draft, which never carry one.
   cta?: string | null;
   source: string;
+  // Shown beside the source line, so the sheet says what shape this
+  // comment is the same way the cards do.
+  type?: unknown;
   // Given the text as it stands — comment alone, or comment plus the CTA
   // this one is showing — so the sheet sends exactly what is on screen.
   onSend: (text: string) => void;
@@ -50,9 +63,12 @@ function Comment({
 
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
-      <span className="text-[10px] font-medium tracking-wider text-zinc-400 uppercase dark:text-zinc-500">
-        {source}
-      </span>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[10px] font-medium tracking-wider text-zinc-400 uppercase dark:text-zinc-500">
+          {source}
+        </span>
+        <TypeChip type={type} />
+      </div>
       <p className="text-sm leading-relaxed whitespace-pre-wrap text-zinc-800 dark:text-zinc-200">
         {text}
       </p>
@@ -196,6 +212,7 @@ function SheetBody({
             text={target.suggestion}
             cta={target.suggestionCta}
             source="Haiku · written on Reload"
+            type={target.suggestionType}
             sent={wasSent(target.suggestion)}
             onSend={(text) => send(text, null)}
           />
@@ -207,6 +224,7 @@ function SheetBody({
             text={draft.text}
             cta={draft.cta}
             source="Haiku · written for this post"
+            type={draft.type}
             sent={wasSent(draft.text)}
             onSend={(text) => send(text, draft.id)}
           />

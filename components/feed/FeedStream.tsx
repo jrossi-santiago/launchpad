@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { TypeChip } from "@/components/comment/TypeChip";
 import { CtaToggle } from "@/components/comment/CtaToggle";
 import { isFreshReply, newestSweepId, type FeedCard } from "@/lib/network/stack";
 import { copyAndOpenReply, withCta } from "@/lib/x/intent";
@@ -301,13 +302,14 @@ export function FeedStream({
       // so the sheet is never emptier than the card behind it.
       suggestion: card.suggested_reply,
       suggestionCta: card.suggested_cta,
+      suggestionType: card.reply_type,
     });
     setDrafts([]);
     setDraftsState("idle");
     setDraftsError(null);
   }
 
-  // Two fully-awaited requests, the same pair Radar and the desktop board
+  // Two fully-awaited requests, the same pair the desktop board
   // make: put the post in the queue, then write drafts for it. Sending is
   // what takes the card out of the Feed — the templates above needed
   // neither call.
@@ -345,12 +347,14 @@ export function FeedStream({
         id: string;
         draft_text: string | null;
         draft_cta: string | null;
+        draft_type: string | null;
       }[])
         .filter((draft) => Boolean(draft.draft_text))
         .map((draft) => ({
           id: draft.id,
           text: draft.draft_text as string,
           cta: draft.draft_cta ?? null,
+          type: draft.draft_type ?? null,
         }));
 
       setDrafts(written);
@@ -485,8 +489,8 @@ export function FeedStream({
           </p>
           <p className="max-w-xs text-sm text-zinc-500 dark:text-zinc-400">
             {hasProfiles
-              ? "Nobody you watch has posted anything new in the last day. Try Explore for strangers worth replying to."
-              : "Add the accounts you want to reply to on Network, and their posts show up here."}
+              ? "Nobody you watch has posted anything new in the last day. Run a HeatCheck for the posts that are hot right now."
+              : "Add the accounts you want to reply to under You → Network, and their posts show up here."}
           </p>
         </div>
       ) : (
@@ -557,17 +561,22 @@ export function FeedStream({
                           "border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60"
                     }`}
                   >
-                    <span
-                      className={`text-[10px] font-medium tracking-wider uppercase ${
-                        isFreshReply(card, currentSweep)
-                          ? "text-emerald-700 dark:text-emerald-300"
-                          : "text-zinc-400 dark:text-zinc-500"
-                      }`}
-                    >
-                      {isFreshReply(card, currentSweep)
-                        ? "Written for this post"
-                        : `Old · written ${formatAge(card.suggested_reply_at)} ago`}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`text-[10px] font-medium tracking-wider uppercase ${
+                          isFreshReply(card, currentSweep)
+                            ? "text-emerald-700 dark:text-emerald-300"
+                            : "text-zinc-400 dark:text-zinc-500"
+                        }`}
+                      >
+                        {isFreshReply(card, currentSweep)
+                          ? "Written for this post"
+                          : `Old · written ${formatAge(card.suggested_reply_at)} ago`}
+                      </span>
+                      {/* Which of the four shapes this reply is. Absent on
+                          replies written before the types existed. */}
+                      <TypeChip type={card.reply_type} />
+                    </div>
                     <p
                       className={`text-sm leading-relaxed whitespace-pre-wrap ${
                         isFreshReply(card, currentSweep)

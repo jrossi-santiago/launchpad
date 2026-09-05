@@ -9,6 +9,13 @@ import {
   isSubstantivePoint,
   isUsableComment,
 } from "@/lib/anthropic/comment";
+import {
+  COMMENT_TYPE_FIELD,
+  COMMENT_TYPE_RULES,
+  isCommentType,
+  violatesTypeRule,
+  type CommentType,
+} from "@/lib/anthropic/commentTypes";
 import type { FetchedTweet } from "@/lib/getx/tweet";
 
 // HeatCheck is the one place in the app that runs Sonnet rather than
@@ -27,6 +34,10 @@ export type HeatCheckKind = "value" | "grok" | "pitch";
 export type HeatCheckRead = {
   comment: string;
   kind: HeatCheckKind;
+  // Which of the four comment types this is, when the comment is a
+  // `value` one. Null for grok and pitch, which are their own shapes and
+  // are not one of the four.
+  commentType: CommentType | null;
   why: string;
   // What this comment adds to the thread, in the model's own words. On
   // the card next to `why`, because a comment whose point you disagree
@@ -59,6 +70,11 @@ const SAVE_COMMENT_TOOL = {
         description:
           "value = add something of your own to the subject; grok = tag @grok and ask it one real question the thread would want answered; pitch = the post is about the exact problem the founder solves, so say what you do.",
       },
+      comment_type: {
+        ...COMMENT_TYPE_FIELD,
+        description:
+          `Which of the four comment types you are writing. Required when kind is value. When kind is grok or pitch answer "question" and ignore it — it is not used. ${COMMENT_TYPE_FIELD.description}`,
+      },
       why: {
         type: "string",
         description:
@@ -73,7 +89,7 @@ const SAVE_COMMENT_TOOL = {
       },
       cta: CTA_FIELD,
     },
-    required: ["about", "kind", "why", "point", "comment", "cta"],
+    required: ["about", "kind", "comment_type", "why", "point", "comment", "cta"],
   },
 } as const;
 
@@ -87,6 +103,9 @@ const SYSTEM_PROMPT = [
   "- `value`: you have something of your own to add to the subject — what happened when you tried it, the case that went differently, the detail people miss, a real question you want the answer to. This is the right answer most of the time.",
   "- `grok`: the thread is turning on a factual question nobody has settled — a number, a claim, a comparison — and asking @grok publicly would genuinely serve the people reading. Never a question you could answer yourself, and never a device for getting your own topic into the thread.",
   "- `pitch`: the post is about the exact problem this founder's product solves, and someone reading it would want to know the product exists. Only when it is that direct. Wanting to pitch is not a reason.",
+  "",
+  "A `value` comment is one of exactly four kinds, and `comment_type` says which before you write it:",
+  ...COMMENT_TYPE_RULES,
   "",
   "Then name the one thing your comment adds in `point`, and write the comment from that.",
   ...BREVITY_RULES.map((rule) => `- ${rule}`),
@@ -143,6 +162,7 @@ export function buildHeatCheckRequest(
 type CommentToolInput = {
   about: string;
   kind: HeatCheckKind;
+  comment_type: CommentType;
   why: string;
   point: string;
   comment: string;
@@ -155,6 +175,7 @@ function isCommentToolInput(input: unknown): input is CommentToolInput {
   return (
     typeof value.about === "string" &&
     (value.kind === "value" || value.kind === "grok" || value.kind === "pitch") &&
+    isCommentType(value.comment_type) &&
     typeof value.why === "string" &&
     typeof value.point === "string" &&
     typeof value.comment === "string" &&
@@ -171,12 +192,28 @@ function isCommentToolInput(input: unknown): input is CommentToolInput {
 // mechanism: a model that cannot name what it is adding has written a
 // comment that adds nothing, and that is the comment this feature exists
 // to stop. An unusable CTA is not a failure — it is simply dropped.
-function isUsable(input: CommentToolInput): boolean {
+// Returns the reason it cannot be posted, or null when it can. A reason
+// rather than a boolean because it is what the corrective retry is given:
+// "not postable" makes the model guess, "an operator add-on needs the
+// figure" makes it fix the thing that is actually wrong.
+function unusableReason(input: CommentToolInput): string | null {
   const trimmed = input.comment.trim();
-  if (!isUsableComment(trimmed)) return false;
-  if (!isSubstantivePoint(input.point)) return false;
-  if (input.kind === "grok" && !/@grok\b/i.test(trimmed)) return false;
-  return true;
+
+  if (!isUsableComment(trimmed)) {
+    return `The comment must be ${COMMENT_MAX} characters or fewer, and must not open by grading the post ("great post", "so true", "congrats").`;
+  }
+  if (!isSubstantivePoint(input.point)) {
+    return "`point` has to name the specific thing this comment adds that the post does not already say.";
+  }
+  if (input.kind === "grok" && !/@grok\b/i.test(trimmed)) {
+    return "A grok comment has to contain @grok.";
+  }
+  // The four types are what a `value` comment can be. grok and pitch have
+  // their own shapes and are checked above.
+  if (input.kind === "value") {
+    return violatesTypeRule(input.comment_type, trimmed);
+  }
+  return null;
 }
 
 async function requestComment(body: unknown): Promise<CommentToolInput> {
@@ -225,31 +262,33 @@ export async function callSonnetHeatCheck(
   const request = buildHeatCheckRequest(brandPack, tweet);
   let result = await requestComment(request);
 
-  if (!isUsable(result)) {
+  let reason = unusableReason(result);
+  if (reason) {
     result = await requestComment({
       ...request,
       messages: [
         ...request.messages,
         {
           role: "assistant",
-          content: `Previous kind: ${result.kind}\nPrevious point: ${result.point}\nPrevious comment: ${result.comment}`,
+          content: `Previous kind: ${result.kind}\nPrevious comment_type: ${result.comment_type}\nPrevious point: ${result.point}\nPrevious comment: ${result.comment}`,
         },
         {
           role: "user",
-          content:
-            `That comment is not postable. Write it again: ${COMMENT_MAX} characters or fewer including spaces, with \`point\` naming the specific thing it adds that the post does not already say, and if the kind is grok it must contain @grok. Keep the same reading of the post.`,
+          content: `That comment is not postable. ${reason} Write it again, ${COMMENT_MAX} characters or fewer including spaces, keeping the same reading of the post. You may pick a different \`comment_type\` if the one you chose is not one you can honestly fill.`,
         },
       ],
     });
 
-    if (!isUsable(result)) {
-      throw new Error("Model did not return a postable comment.");
+    reason = unusableReason(result);
+    if (reason) {
+      throw new Error(`Model did not return a postable comment. ${reason}`);
     }
   }
 
   return {
     comment: result.comment.trim(),
     kind: result.kind,
+    commentType: result.kind === "value" ? result.comment_type : null,
     why: result.why.trim(),
     point: result.point.trim(),
     // A grok comment never carries one, whatever the model returned.
@@ -267,6 +306,7 @@ export function buildMockHeatCheckRead(tweet: FetchedTweet): HeatCheckRead {
 
   return {
     kind,
+    commentType: kind === "value" ? "operator" : null,
     why: "Mock read — set ANTHROPIC_API_KEY to have Sonnet read this post.",
     point: "Mock point — what a real comment would add to this thread.",
     cta: kind === "grok" ? null : "Want the mock process? Reply and I'll send it.",
