@@ -85,6 +85,7 @@ export function selectReloadCards(stacks: NetworkStack[]): FeedCard[] {
         profile_id: stack.profile.id,
         handle: stack.profile.handle,
         display_name: stack.profile.display_name,
+        bio: stack.profile.bio,
       })),
     )
     .sort((a, b) => {
@@ -98,8 +99,10 @@ function toTarget(card: FeedCard): ReplyTarget {
   return {
     handle: card.handle,
     display_name: card.display_name,
+    bio: card.bio,
     content: card.content,
     quoted: card.quoted,
+    context: card.context,
   };
 }
 
@@ -112,6 +115,7 @@ async function writeReply(
   brandPack: BrandPackRow,
   card: FeedCard,
   onTerritory: boolean,
+  sweepId: string,
 ): Promise<FeedReplyResult | null> {
   try {
     const result = process.env.ANTHROPIC_API_KEY
@@ -124,6 +128,7 @@ async function writeReply(
       .update({
         suggested_reply: result.reply,
         suggested_reply_at: writtenAt,
+        reply_sweep_id: sweepId,
         reply_about: result.about,
         // Only kept when it is the reason there is no reply. On a card
         // that did get one, what the model was missing did not stop it,
@@ -157,6 +162,9 @@ export async function writeReloadReplies(
   cards: FeedCard[],
   options: { force?: boolean } = {},
 ): Promise<{ cards: FeedCard[]; summary: ReloadSummary }> {
+  // Stamped on everything this run writes, so the Feed can tell its work
+  // from a reply carried over without inferring it from timestamps.
+  const sweepId = crypto.randomUUID();
   const now = Date.now();
   const summary: ReloadSummary = {
     considered: cards.length,
@@ -196,7 +204,14 @@ export async function writeReloadReplies(
     const batch = needsReply.slice(i, i + REPLY_CONCURRENCY);
     const written = await Promise.all(
       batch.map((card) =>
-        writeReply(supabase, userId, brandPack, card, onTerritory.has(card.id)),
+        writeReply(
+          supabase,
+          userId,
+          brandPack,
+          card,
+          onTerritory.has(card.id),
+          sweepId,
+        ),
       ),
     );
     written.forEach((result, index) => {
@@ -227,6 +242,7 @@ export async function writeReloadReplies(
             ...card,
             suggested_reply: result.reply,
             suggested_reply_at: new Date().toISOString(),
+            reply_sweep_id: sweepId,
             reply_about: result.about,
             reply_unclear: result.reply ? null : (result.unclear ?? "No reason given."),
           }
