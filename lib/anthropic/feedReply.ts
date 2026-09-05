@@ -21,32 +21,53 @@ export type ReplyTarget = {
 
 const SAVE_REPLY_TOOL = {
   name: "save_reply",
-  description: "Save one reply to this specific post, in the founder's voice.",
+  description:
+    "Say what this post is about, then reply to it — or say you cannot tell what it is about and decline.",
   input_schema: {
     type: "object",
     properties: {
+      about: {
+        type: "string",
+        description:
+          "What this post is actually saying, in plain language, as you would explain it to someone who had not seen it. Name the specific thing it is about — the tool, the claim, the event, the argument. Not a description of its shape ('a post about productivity'), and not a restatement of its words.",
+      },
+      unclear: {
+        type: "string",
+        description:
+          "What you cannot tell from what you were given: a link you cannot open, an image you cannot see, a person or product you do not recognise, jargon whose meaning changes the point, a conversation you are missing. Empty string when the post stands on its own.",
+      },
+      can_reply: {
+        type: "boolean",
+        description:
+          "True only if you could reply as someone who genuinely follows this, without guessing at anything in `unclear`. False if a reply would require pretending to know what this is about.",
+      },
       reply: {
         type: "string",
         maxLength: 280,
         description:
-          "The reply, as one interested person talking to another. Under 280 characters, and specific to this post's actual content.",
-      },
-      hook: {
-        type: "string",
-        description:
-          "The exact phrase, claim, number or detail in the post that caught your attention and that the reply picks up on. Quoted from the post, not paraphrased.",
+          "The reply, as one interested person talking to another. Under 280 characters, and about what you described in `about`. Empty string when can_reply is false.",
       },
     },
-    required: ["reply", "hook"],
+    required: ["about", "unclear", "can_reply", "reply"],
   },
 } as const;
 
-// The `hook` field is the whole anti-generic mechanism: asking for the
-// phrase that caught your attention, in the same tool call, forces the
-// model to find one before it writes. A reply whose hook does not appear
-// in the post is a reply that could have been written without reading it,
-// and that is exactly the reply this feature exists to avoid — so it is
-// rejected and asked for again.
+// The tool's field order is the comprehension check, and it replaces the
+// `hook` field that used to sit here. A hook asked the model to copy a
+// phrase out of the post, and copying is something you can do without
+// understanding a word — so the guardrail was satisfied by exactly the
+// behaviour it was meant to catch: a reply from someone who had skimmed.
+//
+// Tool arguments are generated in schema order, so `about` — what this
+// post is actually saying, in plain language — has to exist before a
+// reply can be written from it. `unclear` then names what the model was
+// not given (the link it cannot open, the image it cannot see, the person
+// it does not recognise), and `can_reply` is the way out: a post it does
+// not follow comes back declined instead of bluffed.
+//
+// Declining is a feature, not a failure. Every card having to end in a
+// reply is what produced the confident nonsense; a card that says "read
+// this one yourself" is worth more than a reply that pretends.
 //
 // Grounding alone is not enough, though, and the prompt below is mostly
 // about the other half. A model told to be specific about a post writes
@@ -80,7 +101,7 @@ const SYSTEM_PROMPT = [
   "Who you are in this reply: someone who knows this world well and likes talking about it. Not an expert grading the post — a person in the conversation because they find it interesting. You are replying to the author, not to an audience watching you reply.",
   "",
   "So write the way you would to someone you like:",
-  "- Pick the bit that actually caught your eye and say something back about it. Put that bit in `hook`, in the post's own words.",
+  "- Pick the bit that actually caught your eye and say something back about it.",
   "- Bring something of your own: what happened when you tried it, the case where it went differently, the detail people miss, the thing you have wondered about since.",
   "- Curiosity beats correction. If you see it differently, say so as your own read — 'huh, mine went the other way' — not as a fix.",
   "- A real question is a great reply, when you actually want the answer.",
@@ -97,6 +118,18 @@ const SYSTEM_PROMPT = [
   "It must read like a person typing a quick reply on their phone. One or two sentences, and it is fine if it does not wrap up neatly. Lowercase is fine if the voice notes suggest it.",
   "It MUST fit 280 characters including spaces and punctuation — tighten the wording rather than truncate.",
   "The founder's voice guardrails ('never say') override everything above.",
+  "",
+  "Before any of that: work out what the post is actually about, and say so in `about`. Name the real subject — the tool, the claim, the event, the argument — the way you would explain it to someone who had not seen it. If you cannot name it, you have not understood it.",
+  "",
+  "You are often missing things. A post's link is a bare t.co you cannot open. Its image you cannot see. It may turn on a person, product, in-joke or piece of news you do not know. Put every one of those in `unclear`.",
+  "",
+  "Then be honest in `can_reply`. It is true only if you could reply as someone who genuinely follows this. Set it false — and leave `reply` empty — when:",
+  "- the post's point depends on a link or image you were not given",
+  "- it turns on a name, product or event you do not actually recognise",
+  "- you would have to guess what the author means to say anything at all",
+  "- your reply would work just as well if the subject were something else entirely",
+  "",
+  "Declining is a good answer and costs nothing. A person who did not follow a post scrolls past it; they do not reply anyway and hope. Never write a reply that gestures vaguely at a post you did not understand, and never cover a gap with enthusiasm.",
 ];
 
 // Almost every reply. There is no agenda in the request to steer towards,
@@ -170,43 +203,47 @@ export function buildFeedReplyRequest(
   };
 }
 
-type ReplyToolInput = { reply: string; hook: string };
+// What one call comes back with. `reply` is null when the model declined,
+// and `about` / `unclear` survive either way — they are the diagnostic:
+// reading what the model thought a post meant is how you tell a
+// comprehension problem from a context problem.
+export type FeedReplyResult = {
+  reply: string | null;
+  about: string;
+  unclear: string | null;
+};
+
+type ReplyToolInput = {
+  about: string;
+  unclear: string;
+  can_reply: boolean;
+  reply: string;
+};
 
 function isReplyToolInput(input: unknown): input is ReplyToolInput {
   if (!input || typeof input !== "object") return false;
   const value = input as Record<string, unknown>;
-  return typeof value.reply === "string" && typeof value.hook === "string";
+  return (
+    typeof value.about === "string" &&
+    typeof value.unclear === "string" &&
+    typeof value.can_reply === "boolean" &&
+    typeof value.reply === "string"
+  );
 }
 
-// Normalised containment: the model quotes the post's words but not always
-// its punctuation or casing, and X text is full of curly quotes and
-// non-breaking spaces that would fail a literal indexOf.
-function normalise(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[‘’“”]/g, "'")
-    .replace(/[^a-z0-9']+/g, " ")
-    .trim();
+// A reply the model believes it can write still has to be usable: present,
+// and inside X's limit. Anything else earns the one corrective retry.
+function isUsableReply(input: ReplyToolInput): boolean {
+  const trimmed = input.reply.trim();
+  return trimmed.length > 0 && trimmed.length <= 280;
 }
 
-// True when the hook is really drawn from the post. Short hooks are the
-// interesting failure — a one-word hook ("this") is satisfied by almost
-// any post — so they are held to the same containment test but must carry
-// at least a couple of words to count as evidence of reading.
-export function isGroundedReply(
-  reply: string,
-  hook: string,
-  postText: string,
-): boolean {
-  const trimmed = reply.trim();
-  if (trimmed.length === 0 || trimmed.length > 280) return false;
-
-  const haystack = normalise(postText);
-  const needle = normalise(hook);
-  if (!haystack || !needle) return false;
-  if (needle.split(" ").length < 2) return false;
-
-  return haystack.includes(needle);
+// An `about` that describes the post's shape rather than its subject — "a
+// post about productivity", "sharing an opinion" — is the tell that the
+// model has not read it. Cheap to catch: a real one names things, so it
+// runs longer than a category does.
+function isSubstantiveAbout(about: string): boolean {
+  return about.trim().split(/\s+/).length >= 6;
 }
 
 async function requestReply(body: unknown): Promise<ReplyToolInput> {
@@ -246,48 +283,57 @@ async function requestReply(body: unknown): Promise<ReplyToolInput> {
   return toolUse.input;
 }
 
-// Returns the reply text, or throws. One corrective retry when the first
-// attempt is not anchored in the post — the same shape of retry the drafts
-// module makes for an unusable @grok question.
+// Returns the reply and what the model made of the post, or throws.
+//
+// The one corrective retry is spent on a reply the model meant to write
+// and botched — empty, over the limit, or written from an `about` too
+// vague to have come from reading. A decline is never retried: pressing a
+// model that just said it does not follow the post is how you get the
+// bluff back.
 export async function callHaikuFeedReply(
   brandPack: BrandPackRow,
   target: ReplyTarget,
   onTerritory = false,
-): Promise<string> {
-  const postText = [target.content ?? "", target.quoted?.text ?? ""].join(" ");
+): Promise<FeedReplyResult> {
   const request = buildFeedReplyRequest(brandPack, target, onTerritory);
   let result = await requestReply(request);
 
-  if (!isGroundedReply(result.reply, result.hook, postText)) {
+  const needsRetry =
+    result.can_reply && (!isUsableReply(result) || !isSubstantiveAbout(result.about));
+
+  if (needsRetry) {
     result = await requestReply({
       ...request,
       messages: [
         ...request.messages,
         {
           role: "assistant",
-          content: `Previous reply: ${result.reply}\nPrevious hook: ${result.hook}`,
+          content: `Previous about: ${result.about}\nPrevious reply: ${result.reply}`,
         },
         {
           role: "user",
           content:
-            "That reply was not anchored in the post. Rewrite it. Pick a specific phrase that appears in the post's own text — the bit you would actually react to — put that phrase in `hook` word for word, and reply to it as someone interested in the subject, not as someone assessing the post. Stay under 280 characters.",
+            "That did not work. In `about`, name the specific thing this post is about — the tool, claim, event or argument — not the kind of post it is. Then write a reply to that, under 280 characters. If you genuinely cannot tell what the post is about, set can_reply to false and leave the reply empty; that is a fine answer.",
         },
       ],
     });
   }
 
-  const reply = result.reply.trim();
-  if (!reply || reply.length > 280) {
-    throw new Error("Model returned an unusable reply.");
+  const about = result.about.trim();
+  const unclear = result.unclear.trim() || null;
+
+  if (!result.can_reply || !isUsableReply(result)) {
+    return { reply: null, about, unclear };
   }
 
-  return reply;
+  return { reply: result.reply.trim(), about, unclear };
 }
 
-// Without an API key, still say something about this post rather than
-// nothing — a mock that ignored the post would hide the one bug this
-// feature can have.
-export function buildMockFeedReply(target: ReplyTarget): string {
+export function buildMockFeedReply(target: ReplyTarget): FeedReplyResult {
   const snippet = (target.content ?? "").trim().slice(0, 80);
-  return `[Mock reply to @${target.handle}] re: "${snippet}" — set ANTHROPIC_API_KEY to have Haiku read this post and write a real reply.`;
+  return {
+    reply: `[Mock reply to @${target.handle}] re: "${snippet}" — set ANTHROPIC_API_KEY to have Haiku read this post and write a real reply.`,
+    about: `A mock reading of @${target.handle}'s post, produced without a model.`,
+    unclear: null,
+  };
 }
