@@ -46,7 +46,8 @@ next 13 days will build on. No AI, X, or billing integrations yet — see
 
 6. Open [http://localhost:3000](http://localhost:3000). "Get started" →
    enter your email on `/login` → click the magic link in your inbox → you
-   land on `/home`, signed in.
+   land on `/you/brand-pack`, signed in. Fill the brand pack in first:
+   HeatCheck and the queue both redirect there until it exists.
 
 ## Project layout
 
@@ -57,30 +58,63 @@ app/
   auth/callback/route.ts    Exchanges the magic-link code for a session
   (app)/                    Authenticated shell (redirects to /login if signed out)
     layout.tsx               Sidebar (desktop) + tab bar (mobile) + session check
-    home/page.tsx             Empty state
-    feed/page.tsx             One stream of every watched account's posts
-    explore/page.tsx          Brand-pack searches, one tap each
-    radar/page.tsx            "Coming next" placeholder
-    network/page.tsx          Card-stack view of watched accounts' latest posts
-    launchpad/page.tsx        "Coming next" placeholder
-    leads/page.tsx            "Coming next" placeholder
-    settings/page.tsx         Email, plan, X connection, logout — the mobile "You" tab
+    scheduler/page.tsx        Tab 1 — post creator + scheduling, not built yet
+    heatcheck/page.tsx        Tab 2 — today's hottest posts, one comment each
+    commenter/                Tab 3 — the daily commenting loop
+      layout.tsx               Feed / Queue segmented header
+      page.tsx                 One stream of every watched account's posts
+      queue/page.tsx           Posts you kept, with drafts written for them
+    you/                      Tab 4 — everything that is about you
+      page.tsx                 Hub: sections below, plan, X connection, logout
+      network/page.tsx         Card-stack view of watched accounts' latest posts
+      leads/page.tsx           People pulled from an audience
+      brand-pack/page.tsx      Positioning, ICP, voice, reply templates
+    feed|launchpad|network|leads|home|settings|radar|explore/
+                              One-line redirects to where each moved
 components/                 Sidebar (desktop), TabBar (mobile), ComingNext
-components/mobile/          Quick-comment sheet, shared by Feed and Explore
+components/commenter/       Feed / Queue segmented nav
+components/mobile/          Quick-comment sheet
 lib/supabase/              Browser + server Supabase clients (@supabase/ssr)
 proxy.ts                    Refreshes the Supabase session cookie on every request
                              (Next.js 16's renamed middleware.ts)
 supabase/migrations/        Full 7-table schema, RLS enabled
+docs/sunset/                What Radar and Explore did, before they were removed
 ```
+
+The route names moved; the component and API directory names did not.
+`components/feed/`, `components/launchpad/`, `/api/network/*` and
+`/api/radar/add` all still say what they said, so a rename does not show up
+as a diff on every file that touches them.
+
+## The four tabs
+
+| Tab | Route | What it is for |
+| --- | --- | --- |
+| **Scheduler** | `/scheduler` | Your own posts — write with AI help, line them up. Not built yet. |
+| **HeatCheck** | `/heatcheck` | The posts in your niche that are hot *right now*, one comment each. |
+| **Commenter** | `/commenter` | The daily loop: the accounts you watch, and the queue of posts you kept. |
+| **You** | `/you` | Network, Leads, Brand Pack — plus plan, X connection and logout. |
+
+The shape follows one idea: a reply that earns a reply from the author is
+worth more than a post of your own, so most of the time goes into other
+people's threads (**Commenter**, **HeatCheck**) and the rest into posts that
+give the recognition somewhere to land (**Scheduler**). **You** holds the
+inputs all three read from — who you watch, who you have talked to, and the
+positioning every draft is written against.
+
+Radar and Explore were removed in this restructure. `docs/sunset/radar-explore.md`
+records what they did and what is still in the tree.
 
 ## Mobile
 
 The phone build is a different shape on the same data, not a second app.
-Under `md:` the sidebar is replaced by a four-destination tab bar —
-**Feed**, **Explore**, **Queue** (Launchpad) and **You** (Settings) — and
-everything that doesn't fit in four (Network, Radar, Leads, the brand
-pack) is one tap deeper, listed on You. Above `md:` nothing changes: the
-sidebar and the existing desktop layouts are untouched.
+Under `md:` the sidebar is replaced by the four-destination tab bar —
+**Scheduler**, **HeatCheck**, **Commenter**, **You** — and the two tabs
+that hold more than one view show it the same way on both: Commenter has a
+Feed / Queue segmented header, and You lists Network, Leads and the Brand
+Pack. Above `md:` the sidebar lists the same four with their sub-pages
+nested underneath, so nothing is more than one tap or one click deeper than
+the tab it belongs to.
 
 `app/manifest.ts` plus `app/apple-icon.png` make it installable. Opened
 from the home screen it runs `standalone`, which is the whole point —
@@ -88,7 +122,7 @@ no address bar eating a fifth of the screen — and the viewport is
 `viewportFit: "cover"`, which is only safe because the tab bar and the
 reply sheet both pad themselves with `env(safe-area-inset-bottom)`.
 
-### Feed
+### Commenter — Feed
 
 The same cards as Network, in one reverse-chronological stream across
 every watched account instead of one column per person. It is
@@ -98,7 +132,7 @@ so there is no second query and no second set of rules to keep in sync.
 `POST /api/network/refresh` returns both shapes, `stacks` for the desktop
 board and `feed` for the stream, from that one read.
 
-Network keeps its board. The Feed is in addition to it: triaging one
+Network keeps its board, under You. The Feed is in addition to it: triaging one
 person's stack at a time is still the better view on a laptop, and the
 stream is the one that fits a thumb.
 
@@ -110,7 +144,7 @@ Feed actions, in the order the thumb reaches them:
   replies, not likes, so this is an ordinary official-API call. It posts
   to `/api/tweets/like` with a `card_id`, which resolves the card into a
   `tweets` row (`actions.target_tweet_id` points at that table) and then
-  runs the identical like path a Launchpad card does, daily cap and
+  runs the identical like path a queue card does, daily cap and
   duplicate check included. The card's own state is left alone: a like is
   not a decision to stop replying, so the post stays in the Feed.
 - **Skip** is `/api/network/skip`, unchanged — the row stays with its
@@ -119,20 +153,12 @@ Feed actions, in the order the thumb reaches them:
   visit still polls without it, so the 3-minute poll TTL keeps re-opening
   the tab free.
 
-### Explore
+### Commenter — Queue
 
-Radar with the search box already filled in. `buildExploreQueries()`
-turns each ICP bullet and the positioning line into one chip — lowercased,
-punctuation and stopwords dropped, first four content words kept — so the
-tab opens on results rather than on an empty input. Every chip is an
-ordinary `POST /api/radar/search`, which means the existing search cache
-makes a second tap on a chip free, and every result keeps its
-`whyItMatched` line.
-
-The chips are deliberately string work rather than a model call: no cost,
-no migration, same output every time. If they turn out to be weak in
-practice, generating better ones at brand-pack save time and storing them
-is a change to that one function's caller.
+The posts you kept, each with the three Haiku reply drafts written for it,
+the regeneration meter and the daily action meter. It was `/launchpad`; it
+is `/commenter/queue` now, unchanged otherwise. Posts arrive from the Feed,
+from HeatCheck, or from pasting a tweet URL or id.
 
 ### Quick comments
 
@@ -144,7 +170,7 @@ in the app:
   on anything to be useful.
 - **The three Haiku drafts** written for that specific post, which only
   exist once the post is in the queue. **Draft replies for this post**
-  makes the same two awaited calls Radar makes on Add: put the post in
+  makes the same two awaited calls the queue makes on Add: put the post in
   the queue, then generate.
 
 Tapping a comment copies it and opens `x.com/intent/tweet?in_reply_to=…`
@@ -194,12 +220,12 @@ is nothing to invent an asset from. The `@grok` drafts never carry one
 either: the point of tagging Grok is a public answer in the thread, and an
 ask stapled underneath reads as bait.
 
-## Network
+## You — Network
 
 Network watches a set of X accounts and lays their latest original posts out
 as one card stack per person, so you can flip through them and send the good
-ones into the Launchpad queue (where they get the same three Haiku reply
-drafts a Radar result does).
+ones into the Commenter queue (where they get three Haiku reply
+drafts each).
 
 Replies and retweets are filtered out: a stack only ever holds a person's own
 original posts. Quote tweets stay, because a quote *is* the person's own post
@@ -248,7 +274,7 @@ HeatCheck talks to X through two providers, split by what the call does:
 
 | | Provider | Why |
 | --- | --- | --- |
-| **Reads** — Radar search, Network stacks, audience pulls, tweet fetch | GetXAPI (`lib/getx/`) | No account acts, so nothing is at risk; far cheaper than official reads. |
+| **Reads** — Network stacks, HeatCheck, audience pulls, tweet fetch | GetXAPI (`lib/getx/`) | No account acts, so nothing is at risk; far cheaper than official reads. |
 | **Writes** — replies, likes, follows (and scheduled posts later) | Official X API v2 (`lib/x/`) | Every write is a visible action by the user's account. Official OAuth is the only way to do that without risking a restriction. |
 
 Routes never pick a provider themselves. They call `postAs`, `likeAs` or
@@ -292,7 +318,7 @@ So for an officially connected account, HeatCheck drafts the reply and
 you send it. **Copy & Post** copies the draft and opens
 `x.com/intent/tweet?in_reply_to=<id>&text=<draft>` in a new tab — X's own
 reply composer, already filled in — so sending is one click there and
-**Mark posted** back in Launchpad. The clipboard copy is deliberate
+**Mark posted** back in the Commenter queue. The clipboard copy is deliberate
 redundancy: if X ever stops honouring the `text` parameter, the draft is
 still on the clipboard and the flow degrades to a paste rather than
 breaking. `canAutoReply()` in
@@ -304,6 +330,8 @@ If you obtain Enterprise or Public Utility access, set
 `X_ENTERPRISE_REPLY_ACCESS=true` to turn the Post button back on.
 
 ### Adding a scheduler later
+
+The `/scheduler` tab is the placeholder for this.
 
 `postAs(supabase, connection, text, replyToTweetId)` already posts a
 standalone post when `replyToTweetId` is `null`. A scheduler needs a

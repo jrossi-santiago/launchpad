@@ -307,7 +307,7 @@ export function FeedStream({
     setDraftsError(null);
   }
 
-  // Two fully-awaited requests, the same pair Radar and the desktop board
+  // Two fully-awaited requests, the same pair the desktop board
   // make: put the post in the queue, then write drafts for it. Sending is
   // what takes the card out of the Feed — the templates above needed
   // neither call.
@@ -485,8 +485,8 @@ export function FeedStream({
           </p>
           <p className="max-w-xs text-sm text-zinc-500 dark:text-zinc-400">
             {hasProfiles
-              ? "Nobody you watch has posted anything new in the last day. Try Explore for strangers worth replying to."
-              : "Add the accounts you want to reply to on Network, and their posts show up here."}
+              ? "Nobody you watch has posted anything new in the last day. Run a HeatCheck for the posts that are hot right now."
+              : "Add the accounts you want to reply to under You → Network, and their posts show up here."}
           </p>
         </div>
       ) : (

@@ -336,8 +336,8 @@ export function LeadsTable({
           {!hasPack ? (
             <span className="text-xs text-zinc-500 dark:text-zinc-400">
               Create a Brand Pack first —{" "}
-              <a href="/home" className="underline decoration-dotted underline-offset-2">
-                go to /home
+              <a href="/you/brand-pack" className="underline decoration-dotted underline-offset-2">
+                go to your Brand Pack
               </a>
               .
             </span>

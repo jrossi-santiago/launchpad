@@ -6,7 +6,7 @@ import { copyAndOpenReply, withCta } from "@/lib/x/intent";
 
 export type QuickTarget = {
   // The post being replied to. `cardId` is set when it came from the Feed,
-  // `fetched` when it came from Explore — whichever it is, that's what
+  // `fetched` when it was looked up by id — whichever it is, that's what
   // "Draft replies for this post" needs to put it in the queue.
   xTweetId: string;
   authorHandle: string;

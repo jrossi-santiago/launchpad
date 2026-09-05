@@ -25,7 +25,7 @@ export default async function HeatCheckPage() {
     .maybeSingle();
 
   if (!brandPack) {
-    redirect("/home");
+    redirect("/you/brand-pack");
   }
 
   const usage = await getHeatCheckUsage(supabase, user.id);
