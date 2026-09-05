@@ -56,19 +56,110 @@ app/
   login/page.tsx            Magic-link sign-in
   auth/callback/route.ts    Exchanges the magic-link code for a session
   (app)/                    Authenticated shell (redirects to /login if signed out)
-    layout.tsx               Sidebar + session check
+    layout.tsx               Sidebar (desktop) + tab bar (mobile) + session check
     home/page.tsx             Empty state
+    feed/page.tsx             One stream of every watched account's posts
+    explore/page.tsx          Brand-pack searches, one tap each
     radar/page.tsx            "Coming next" placeholder
     network/page.tsx          Card-stack view of watched accounts' latest posts
     launchpad/page.tsx        "Coming next" placeholder
     leads/page.tsx            "Coming next" placeholder
-    settings/page.tsx         Email, plan, logout
-components/                 Sidebar, ComingNext, LogoutButton
+    settings/page.tsx         Email, plan, X connection, logout — the mobile "You" tab
+components/                 Sidebar (desktop), TabBar (mobile), ComingNext
+components/mobile/          Quick-comment sheet, shared by Feed and Explore
 lib/supabase/              Browser + server Supabase clients (@supabase/ssr)
 proxy.ts                    Refreshes the Supabase session cookie on every request
                              (Next.js 16's renamed middleware.ts)
 supabase/migrations/        Full 7-table schema, RLS enabled
 ```
+
+## Mobile
+
+The phone build is a different shape on the same data, not a second app.
+Under `md:` the sidebar is replaced by a four-destination tab bar —
+**Feed**, **Explore**, **Queue** (Launchpad) and **You** (Settings) — and
+everything that doesn't fit in four (Network, Radar, Leads, the brand
+pack) is one tap deeper, listed on You. Above `md:` nothing changes: the
+sidebar and the existing desktop layouts are untouched.
+
+`app/manifest.ts` plus `app/apple-icon.png` make it installable. Opened
+from the home screen it runs `standalone`, which is the whole point —
+no address bar eating a fifth of the screen — and the viewport is
+`viewportFit: "cover"`, which is only safe because the tab bar and the
+reply sheet both pad themselves with `env(safe-area-inset-bottom)`.
+
+### Feed
+
+The same cards as Network, in one reverse-chronological stream across
+every watched account instead of one column per person. It is
+`flattenStacks()` over `loadStacks()` — the same rows, the same
+`STACK_WINDOW` per account, the same already-sent-or-skipped filtering —
+so there is no second query and no second set of rules to keep in sync.
+`POST /api/network/refresh` returns both shapes, `stacks` for the desktop
+board and `feed` for the stream, from that one read.
+
+Network keeps its board. The Feed is in addition to it: triaging one
+person's stack at a time is still the better view on a laptop, and the
+stream is the one that fits a thumb.
+
+Feed actions, in the order the thumb reaches them:
+
+- **Reply** opens the quick-comment sheet (below), which is the point of
+  the whole tab.
+- **Like** is the one genuinely one-tap action here — X restricted
+  replies, not likes, so this is an ordinary official-API call. It posts
+  to `/api/tweets/like` with a `card_id`, which resolves the card into a
+  `tweets` row (`actions.target_tweet_id` points at that table) and then
+  runs the identical like path a Launchpad card does, daily cap and
+  duplicate check included. The card's own state is left alone: a like is
+  not a decision to stop replying, so the post stays in the Feed.
+- **Skip** is `/api/network/skip`, unchanged — the row stays with its
+  state flipped, which is what stops the next poll from resurrecting it.
+- **Pull down** at the top of the stream sends `force: true`. An ordinary
+  visit still polls without it, so the 3-minute poll TTL keeps re-opening
+  the tab free.
+
+### Explore
+
+Radar with the search box already filled in. `buildExploreQueries()`
+turns each ICP bullet and the positioning line into one chip — lowercased,
+punctuation and stopwords dropped, first four content words kept — so the
+tab opens on results rather than on an empty input. Every chip is an
+ordinary `POST /api/radar/search`, which means the existing search cache
+makes a second tap on a chip free, and every result keeps its
+`whyItMatched` line.
+
+The chips are deliberately string work rather than a model call: no cost,
+no migration, same output every time. If they turn out to be weak in
+practice, generating better ones at brand-pack save time and storing them
+is a change to that one function's caller.
+
+### Quick comments
+
+The sheet that opens on Reply, from either tab. Two sources, both already
+in the app:
+
+- **Your reply templates** (`brand_packs.reply_templates`) — shown
+  immediately, no request, no model, no cost. The sheet is never waiting
+  on anything to be useful.
+- **The three Haiku drafts** written for that specific post, which only
+  exist once the post is in the queue. **Draft replies for this post**
+  makes the same two awaited calls Radar makes on Add: put the post in
+  the queue, then generate.
+
+Tapping a comment copies it and opens `x.com/intent/tweet?in_reply_to=…`
+in one gesture — `copyAndOpenReply()` in `lib/x/intent.ts`, shared with
+the desktop card. The copy is deliberately not awaited before the open:
+awaiting first ends the user-gesture context and mobile Safari swallows
+the new tab as a popup. On a phone that URL is claimed by the installed X
+app, so it lands in the native composer.
+
+Coming back from X is the only signal that the round trip happened —
+there is no callback from the composer — so returning to the tab asks
+"Did that go up?" and marks the draft posted, instead of leaving
+**Mark posted** as a button to find later. Only drafts can be marked: a
+template has no `drafts` row behind it, which is exactly the trade for
+it being instant.
 
 ## Network
 

@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { pollProfiles } from "@/lib/network/poll";
-import { loadStacks, type NetworkProfileRow } from "@/lib/network/stack";
+import {
+  flattenStacks,
+  loadStacks,
+  type NetworkProfileRow,
+} from "@/lib/network/stack";
 
 // Re-polls watched accounts and returns the rebuilt stacks. This is the
 // only thing that fills a stack: Network is poll-only, so a stack changes
@@ -36,6 +40,9 @@ export async function POST(request: Request) {
 
   await pollProfiles(supabase, user.id, (profiles ?? []) as NetworkProfileRow[], { force });
 
+  // Both shapes of the same rows: `stacks` for the desktop board, `feed`
+  // for the phone's single stream. Derived in memory from one read, so
+  // serving both costs nothing over serving either.
   const stacks = await loadStacks(supabase, user.id);
-  return NextResponse.json({ stacks });
+  return NextResponse.json({ stacks, feed: flattenStacks(stacks) });
 }

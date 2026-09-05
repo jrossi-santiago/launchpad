@@ -7,11 +7,33 @@ import type { FetchedTweet, TweetMetrics } from "@/lib/getx/tweet";
 export type NetworkTweet = FetchedTweet & {
   posted_at: string | null; // ISO-8601, null when GetXAPI's date is unparseable
   quoted: QuotedPost | null; // the post this one quotes, when it quotes one
+  context: PostContext | null; // what it links to and shows, when it does
 };
 
 // Just enough of a quoted post to show what is being reacted to. Not a
 // NetworkTweet: a quote's quote is not something a card needs, and metrics
 // on a post we are not triaging would only add noise.
+// What a post carries besides its words, and what we can say about it.
+//
+// A tweet is a fragment. Its link is a bare t.co with no title, its image
+// is invisible to anything reading the text, and both routinely carry the
+// entire point — a post whose text is "this is wild" plus a screenshot
+// means nothing on its own. Anything writing a reply from the text alone
+// is guessing, and guessing is what sounds like pretending.
+//
+// So this is the honest inventory: what the post links to, and what it
+// shows. Even the bare fact "there is an image here you cannot see" is
+// worth carrying, because it turns an invented reply into an admission.
+export type PostContext = {
+  // Expanded where GetXAPI gives us the expansion, t.co otherwise.
+  links: string[];
+  // How many images or videos hang off the post.
+  media: number;
+  // Alt text, when whoever posted it wrote any. Rare and precious: it is
+  // the only description of an image we ever get.
+  media_alt: string[];
+};
+
 export type QuotedPost = {
   handle: string;
   name: string | null;
@@ -119,7 +141,79 @@ export function mapRawTweet(raw: unknown): NetworkTweet | null {
     engagement_score: metrics.like_count + metrics.retweet_count + metrics.reply_count,
     posted_at: parseCreatedAt(item.createdAt),
     quoted: mapQuotedTweet(item.quoted_tweet),
+    context: mapContext(item, text),
   };
+}
+
+// UNDOCUMENTED SHAPE — GetXAPI does not document entities or media, and
+// different endpoints have historically flattened them differently, so
+// every level here is optional and every field is checked. A payload that
+// carries none of it still yields the t.co links scraped out of the text,
+// which is the one source that cannot go missing: X puts them there.
+function readArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter(
+        (entry): entry is Record<string, unknown> =>
+          Boolean(entry) && typeof entry === "object",
+      )
+    : [];
+}
+
+export function mapContext(
+  item: Record<string, unknown>,
+  text: string,
+): PostContext | null {
+  const entities =
+    item.entities && typeof item.entities === "object"
+      ? (item.entities as Record<string, unknown>)
+      : null;
+  const extended =
+    item.extendedEntities && typeof item.extendedEntities === "object"
+      ? (item.extendedEntities as Record<string, unknown>)
+      : null;
+
+  const links = new Set<string>();
+  for (const url of readArray(entities?.urls)) {
+    const expanded =
+      (typeof url.expanded_url === "string" ? url.expanded_url : null) ??
+      (typeof url.expandedUrl === "string" ? url.expandedUrl : null) ??
+      (typeof url.url === "string" ? url.url : null);
+    if (expanded) links.add(expanded);
+  }
+  // The fallback, and the reason a missing entities block costs nothing:
+  // a t.co in the text is a link whatever the payload says.
+  for (const match of text.matchAll(/https?:\/\/t\.co\/\w+/g)) {
+    const bare = match[0];
+    if (![...links].some((link) => link.includes(bare))) links.add(bare);
+  }
+
+  const mediaItems = [
+    ...readArray(extended?.media),
+    ...readArray(entities?.media),
+    ...readArray(item.media),
+  ];
+  const seen = new Set<string>();
+  const alt: string[] = [];
+  let media = 0;
+  for (const entry of mediaItems) {
+    const key =
+      (typeof entry.media_url_https === "string" ? entry.media_url_https : null) ??
+      (typeof entry.media_url === "string" ? entry.media_url : null) ??
+      (typeof entry.id_str === "string" ? entry.id_str : null) ??
+      String(media);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    media += 1;
+
+    const description =
+      (typeof entry.ext_alt_text === "string" ? entry.ext_alt_text : null) ??
+      (typeof entry.altText === "string" ? entry.altText : null) ??
+      (typeof entry.alt_text === "string" ? entry.alt_text : null);
+    if (description) alt.push(description);
+  }
+
+  if (links.size === 0 && media === 0) return null;
+  return { links: [...links], media, media_alt: alt };
 }
 
 // UNDOCUMENTED SHAPE — GetXAPI's spec shows `quoted_tweet` on a tweet but
@@ -269,6 +363,16 @@ export function buildMockUserTweets(handle: string): UserTweetsPage {
               name: "Someone Else",
               text: "[Mock quoted post] The post being reacted to, which is the half that carries the meaning.",
               url: "https://x.com/someone_else/status/9000000000000000000",
+            }
+          : null,
+      // And every fourth carries a link and an image, so the "you cannot
+      // see this" path is exercised without an API key too.
+      context:
+        i % 4 === 2
+          ? {
+              links: ["https://example.com/mock-article"],
+              media: 1,
+              media_alt: [],
             }
           : null,
     };
