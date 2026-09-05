@@ -3,13 +3,16 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-// Commenter is one job in two views: the stream of posts from the accounts
-// you watch, and the queue of posts you kept, which is where the written
-// drafts live. Two segments rather than two tabs, because choosing between
-// them is not a navigation decision — it is "am I picking, or am I sending".
+// Commenter is one job in three views: the stream of posts from the
+// accounts you watch, the queue of posts you kept — which is where the
+// written drafts live — and Room 2, the same loop pointed at the few
+// buyers you are working one at a time. Segments rather than tabs,
+// because choosing between them is not a navigation decision — it is
+// "am I picking, am I sending, or am I working someone".
 const SEGMENTS = [
   { href: "/commenter", label: "Feed" },
   { href: "/commenter/queue", label: "Queue" },
+  { href: "/commenter/room2", label: "Room 2" },
 ] as const;
 
 export function CommenterNav() {
