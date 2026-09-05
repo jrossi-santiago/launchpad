@@ -17,12 +17,19 @@ import {
   recordHeatCheck,
 } from "@/lib/usage/heatChecks";
 
-// A search plus ten Sonnet reads, four at a time. Sonnet is slower than
+// A search plus ten Sonnet reads, five at a time. Sonnet is slower than
 // the Haiku work elsewhere, so the route asks for room to finish rather
 // than being cut off holding reads it already paid for.
 export const maxDuration = 120;
 
-const READ_CONCURRENCY = 4;
+// Five rather than the four the Feed's Reload uses, which turns ten
+// reads into two waves instead of three and takes about seven seconds
+// off the wait. The cost is a slightly wider window for a rate-limited
+// call, and that lands softly: a read that fails is dropped and the run
+// returns the other nine, so the failure mode is a missing card rather
+// than a failed HeatCheck. Retrying a 429 instead of dropping the card
+// is the better fix if this ever bites.
+const READ_CONCURRENCY = 5;
 
 // Nothing here is written to the database. HeatCheck is deliberately a
 // thing you press, look at, and walk away from: the cards live in the

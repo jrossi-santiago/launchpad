@@ -5,14 +5,14 @@ import type { HeatCheckCard, HeatCheckKind } from "@/lib/anthropic/heatcheck";
 import type { HeatCheckUsage } from "@/lib/usage/heatChecks";
 
 // What one press actually costs in wall-clock: a GetXAPI search, then ten
-// Sonnet reads four at a time. Three waves of a model that thinks before
-// it writes lands around twenty-five seconds, and a spinner sitting there
-// for twenty-five seconds reads as broken. So the wait gets a bar with a
+// Sonnet reads five at a time. Two waves of a model that thinks before
+// it writes lands around eighteen seconds, and a spinner sitting there
+// for eighteen seconds reads as broken. So the wait gets a bar with a
 // number on it, easing towards — never reaching — the end, and snapping
 // shut when the response actually lands. It is an estimate presented as
 // an estimate, not a real measurement of progress; the run finishing is
 // what ends it.
-const ESTIMATED_MS = 25_000;
+const ESTIMATED_MS = 18_000;
 const CEILING = 0.92;
 const TICK_MS = 100;
 
@@ -222,7 +222,7 @@ export function HeatCheckTab({
             />
           </div>
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            Reading ten posts properly takes about half a minute. Leaving the
+            Reading ten posts properly takes around twenty seconds. Leaving the
             tab cancels it.
           </p>
         </div>
