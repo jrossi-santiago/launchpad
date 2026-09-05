@@ -23,6 +23,38 @@ export const COMMENT_MAX = 180;
 // short enough that it cannot become a second comment.
 export const CTA_MAX = 80;
 
+// How long the fields in front of the comment are allowed to run.
+//
+// Every one of these is generated before the comment itself — that is the
+// entire mechanism, since tool arguments come back in schema order — and
+// every one of them is therefore latency the person waiting pays before a
+// single character of the reply exists. On a sweep of thirty cards, eight
+// at a time, the padding in front of the comment is a real part of how
+// long the button takes.
+//
+// The floors are not new. `isSubstantivePoint` and its neighbours have
+// always rejected a field that ran too short, because a justification
+// that names nothing is the tell that nothing is being justified. What is
+// new is that the model is told what they are. It was being marked
+// against a minimum nobody had mentioned, which is the reliable way to
+// get an essay: write long enough and you cannot be too short.
+//
+// So each field now names both ends, from the same constant the validator
+// reads. A window is a target you can hit. A floor you cannot see is a
+// reason to keep typing.
+export const POINT_MIN_WORDS = 4;
+export const POINT_MAX_WORDS = 12;
+export const WHY_SPECIFIC_MIN_WORDS = 5;
+export const WHY_SPECIFIC_MAX_WORDS = 15;
+export const PROFILE_CLICK_MIN_WORDS = 3;
+export const PROFILE_CLICK_MAX_WORDS = 10;
+
+// `maxLength` alongside the word window, because the schema is the half
+// of this the model cannot talk itself out of. Roughly seven characters a
+// word, which leaves room for the long ones rather than cutting a field
+// off mid-thought at exactly the wrong moment.
+const CHARS_PER_WORD = 7;
+
 // What a comment has to do to be worth the space it takes under someone
 // else's post. `point` in the tool schema is the enforcement: it is
 // generated before the comment (tool arguments come back in schema
@@ -31,8 +63,8 @@ export const CTA_MAX = 80;
 // the post and stops.
 export const POINT_FIELD = {
   type: "string",
-  description:
-    "The one thing this comment adds that the post does not already contain: a result you got, a case that went the other way, a detail people miss, or a question you actually want answered. One clause, concrete. If you cannot name it, there is no comment to write.",
+  maxLength: POINT_MAX_WORDS * CHARS_PER_WORD,
+  description: `The one thing this comment adds that the post does not already contain — a result, a case that went the other way, a detail people miss, or something you want answered. ${POINT_MIN_WORDS}-${POINT_MAX_WORDS} words, concrete, no sentence. If you cannot name it, there is no comment to write.`,
 } as const;
 
 export const BREVITY_RULES = [
@@ -63,8 +95,12 @@ export const CTA_RULES = [
 // A point that names nothing is the tell that nothing is being added.
 // Same cheap check the Feed already runs on `about`: a real one names
 // things, so it runs longer than a category does.
+//
+// The floor is read from the same constant the field description quotes,
+// so the number the model is given and the number it is judged against
+// cannot drift apart.
 export function isSubstantivePoint(point: string): boolean {
-  return point.trim().split(/\s+/).length >= 4;
+  return point.trim().split(/\s+/).length >= POINT_MIN_WORDS;
 }
 
 // The comments the system doc kills by name: the ones that are socially
@@ -125,14 +161,14 @@ export function cleanCta(value: unknown): string | null {
 // comment.
 export const WHY_SPECIFIC_FIELD = {
   type: "string",
-  description:
-    "Why this comment dies on any other post. Name the thing in THIS post it depends on — the number they gave, the claim they made, the tool they named, the decision they described. 'It is relevant to the topic' is not an answer; if that is all you have, the comment is generic and you should write a different one.",
+  maxLength: WHY_SPECIFIC_MAX_WORDS * CHARS_PER_WORD,
+  description: `What in THIS post the comment depends on — their number, their claim, the tool they named, the decision they described. ${WHY_SPECIFIC_MIN_WORDS}-${WHY_SPECIFIC_MAX_WORDS} words. "Relevant to the topic" is not an answer: it means the comment fits anywhere, so write a different one.`,
 } as const;
 
 export const PROFILE_CLICK_FIELD = {
   type: "string",
-  description:
-    "Finish the sentence: after reading this comment, a stranger thinks 'this is the person who ___'. One concrete clause — what they have done or know, not an adjective. If the honest answer is 'agrees with the post', there is no comment here.",
+  maxLength: PROFILE_CLICK_MAX_WORDS * CHARS_PER_WORD,
+  description: `Finish "this is the person who ___" — what they have done or know, not an adjective. ${PROFILE_CLICK_MIN_WORDS}-${PROFILE_CLICK_MAX_WORDS} words. If the honest answer is "agrees with the post", there is no comment here.`,
 } as const;
 
 export const SPECIFICITY_RULES = [
@@ -151,7 +187,7 @@ const HAND_WAVY =
 // takes to state.
 export function isSubstantiveWhySpecific(text: string): boolean {
   const trimmed = text.trim();
-  if (trimmed.split(/\s+/).length < 5) return false;
+  if (trimmed.split(/\s+/).length < WHY_SPECIFIC_MIN_WORDS) return false;
   return !HAND_WAVY.test(trimmed);
 }
 
@@ -164,6 +200,6 @@ const NO_ONE_IN_PARTICULAR =
 
 export function isSubstantiveProfileClick(text: string): boolean {
   const trimmed = text.trim();
-  if (trimmed.split(/\s+/).length < 3) return false;
+  if (trimmed.split(/\s+/).length < PROFILE_CLICK_MIN_WORDS) return false;
   return !NO_ONE_IN_PARTICULAR.test(trimmed);
 }

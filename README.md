@@ -217,6 +217,45 @@ came from the second draft — each one a round trip saved) and `retried`
 `usage_events` row every Reload writes. A sweep where `alternate` sits
 near zero is a sweep paying for a spare it never uses.
 
+### The fields in front of the comment have both ends now
+
+`about`, `point`, `why_specific` and `profile_click` are all generated
+*before* the reply — that is the whole mechanism, since tool arguments
+come back in schema order and a claim made first is a constraint while one
+made afterwards is a label. It is also latency: on a sweep of thirty cards
+the padding in front of each comment is a real part of how long the button
+takes, paid before a single character of the reply exists.
+
+The floors were never new. `isSubstantivePoint` and its neighbours have
+always rejected a field that ran too short, because a justification that
+names nothing is the tell that nothing is being justified. What was new is
+that **the model was never told what they were** — marked against a
+minimum nobody mentioned, which is the reliable way to get an essay: write
+long enough and you cannot be too short.
+
+So each field now names both ends, read from the same constant the
+validator reads (`POINT_MIN_WORDS` / `POINT_MAX_WORDS` and friends in
+`lib/anthropic/comment.ts`), with a `maxLength` alongside because the
+schema is the half the model cannot talk itself out of:
+
+| Field | Window | Floor enforced by |
+| --- | --- | --- |
+| `about` | 6-20 words | `isSubstantiveAbout` |
+| `point` | 4-12 words | `isSubstantivePoint` |
+| `why_specific` | 5-15 words | `isSubstantiveWhySpecific` |
+| `profile_click` | 3-10 words | `isSubstantiveProfileClick` |
+
+A window is a target you can hit; a floor you cannot see is a reason to
+keep typing.
+
+The obvious way for this to go wrong is a cap tight enough that fields
+start failing their own minimums — which costs a whole draft to save a few
+tokens, and after the two-draft change above would push work back onto the
+retry. So `ReloadSummary.rejected` counts every draft rejection by the
+check that made it (`shape`, `point`, `why_specific`, `profile_click`,
+`reply`) and lands in the same `usage_events` row. A cap that is too tight
+shows up as its field climbing in that tally, rather than as a surprise.
+
 Replies are written eight at a time (`REPLY_CONCURRENCY`) from a pool
 rather than four at a time in waves — a wave runs at the speed of its
 slowest member, and the slow member is usually a card paying for its one
