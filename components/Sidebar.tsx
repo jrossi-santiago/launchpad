@@ -13,13 +13,17 @@ const NAV = [
   {
     href: "/commenter",
     label: "Commenter",
-    children: [{ href: "/commenter/queue", label: "Queue" }],
+    children: [
+      { href: "/commenter/queue", label: "Queue" },
+      { href: "/commenter/room2", label: "Room 2" },
+    ],
   },
   {
     href: "/you",
     label: "You",
     children: [
       { href: "/you/network", label: "Network" },
+      { href: "/you/pipeline", label: "Pipeline" },
       { href: "/you/leads", label: "Leads" },
       { href: "/you/brand-pack", label: "Brand Pack" },
     ],

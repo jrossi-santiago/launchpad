@@ -27,6 +27,11 @@ const SECTIONS = [
     description: "The accounts you watch — anchors, peers and buyers",
   },
   {
+    href: "/you/pipeline",
+    label: "Pipeline",
+    description: "Waitlist, the few buyers you're working, and the backlog",
+  },
+  {
     href: "/you/leads",
     label: "Leads",
     description: "People pulled from an audience, and what you sent them",
