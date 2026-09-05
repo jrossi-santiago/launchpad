@@ -68,7 +68,7 @@ function saveReplyTool(onTerritory: boolean, proofs: Proof[]) {
   return {
     name: "save_reply",
     description:
-      "Say what this post is about, then reply to it — or say you cannot tell what it is about and decline.",
+      "Say what this post is about, then write two replies to it in different shapes — or say you cannot tell what it is about and decline.",
     input_schema: {
       type: "object",
       properties: {
@@ -87,32 +87,41 @@ function saveReplyTool(onTerritory: boolean, proofs: Proof[]) {
           description:
             "True only if you could reply as someone who genuinely follows this, without guessing at anything in `unclear`. False if a reply would require pretending to know what this is about.",
         },
-        comment_type: {
-          ...typeField,
+        replies: {
+          type: "array",
+          minItems: 2,
+          maxItems: 2,
           description:
-            `Which kind of reply this is, chosen before you write it. When can_reply is false, answer "question"; it is ignored. ${typeField.description}`,
+            "Two replies to this post, best first. The first is the one you would actually send; the second is the best reply of a different kind, in case the first does not hold up. Empty array when can_reply is false.",
+          items: {
+            type: "object",
+            properties: {
+              comment_type: {
+                ...typeField,
+                description: `Which kind of reply this is, chosen before you write it. ${typeField.description}`,
+              },
+              point: POINT_FIELD,
+              why_specific: WHY_SPECIFIC_FIELD,
+              profile_click: PROFILE_CLICK_FIELD,
+              reply: {
+                type: "string",
+                maxLength: COMMENT_MAX,
+                description: `The reply, as one interested person talking to another. ${COMMENT_MAX} characters or fewer, one sentence — two only if the second is a question — and about what you described in \`about\`.`,
+              },
+              ...(onTerritory ? { cta: CTA_FIELD } : {}),
+            },
+            required: [
+              "comment_type",
+              "point",
+              "why_specific",
+              "profile_click",
+              "reply",
+              ...(onTerritory ? ["cta"] : []),
+            ],
+          },
         },
-        point: POINT_FIELD,
-        why_specific: WHY_SPECIFIC_FIELD,
-        profile_click: PROFILE_CLICK_FIELD,
-        reply: {
-          type: "string",
-          maxLength: COMMENT_MAX,
-          description: `The reply, as one interested person talking to another. ${COMMENT_MAX} characters or fewer, one sentence — two only if the second is a question — and about what you described in \`about\`. Empty string when can_reply is false.`,
-        },
-        ...(onTerritory ? { cta: CTA_FIELD } : {}),
       },
-      required: [
-        "about",
-        "unclear",
-        "can_reply",
-        "comment_type",
-        "point",
-        "why_specific",
-        "profile_click",
-        "reply",
-        ...(onTerritory ? ["cta"] : []),
-      ],
+      required: ["about", "unclear", "can_reply", "replies"],
     },
   } as const;
 }
@@ -162,7 +171,10 @@ function saveReplyTool(onTerritory: boolean, proofs: Proof[]) {
 function systemPromptLines(proofs: Proof[]): string[] {
   return [
   "You write X (Twitter) replies for a founder, in their own voice, from their Brand Pack.",
-  "You are given one post. Write one reply to that post.",
+  "You are given one post. Write two replies to that post, in `replies`, best first.",
+  "",
+  "Only the first one is going to be sent. The second exists because the first is checked against the shape it claims — an operator add-on with no number in it, a receipts story that happened to nobody, a question that answers itself — and a first reply that fails that check would otherwise leave this post with nothing under it. So the second is a real reply written to a different shape, not a variation on the first: different `comment_type`, different `point`, and it must stand on its own.",
+  "Order them honestly. The first is the best reply this post can carry, by the ranking below; the second is the best of the kinds that are left. Do not hold back the good one to make a pair.",
   "",
   "Who you are in this reply: someone who knows this world well and likes talking about it. Not an expert grading the post — a person in the conversation because they find it interesting. You are replying to the author, not to an audience watching you reply.",
   "",
@@ -250,7 +262,10 @@ export function buildFeedReplyRequest(
 
   return {
     model: "claude-haiku-4-5-20251001",
-    max_tokens: 640,
+    // Two drafts rather than one, so the ceiling moved with them. It is
+    // still a ceiling and not a target: the replies are capped at
+    // COMMENT_MAX by the schema, and everything else here is one clause.
+    max_tokens: 1024,
     system: systemPrompt(onTerritory, proofs),
     messages: [
       {
@@ -320,12 +335,23 @@ export type FeedReplyResult = {
   // The ask, written apart from the reply and only ever on an
   // on-territory post. Null everywhere else, and null is the common case.
   cta: string | null;
+  // Which of the two drafts was sent, and whether a second call was
+  // needed at all. Kept apart because they answer different questions and
+  // a decline has an answer to only one of them: `source` is null when
+  // nothing was sendable, `retried` is still true if a round trip was
+  // spent finding that out.
+  //
+  // Between them they are the whole case for asking for two drafts.
+  // `alternate` counts the cards that would have cost a second round trip
+  // under the old shape; `retried` counts the ones that still do. A sweep
+  // where alternate is near zero is a sweep paying for a spare it never
+  // uses — ReloadSummary totals both into the usage row so that is a
+  // question the data can answer.
+  source: "primary" | "alternate" | null;
+  retried: boolean;
 };
 
-type ReplyToolInput = {
-  about: string;
-  unclear: string;
-  can_reply: boolean;
+type ReplyCandidate = {
   comment_type: CommentType;
   point: string;
   why_specific: string;
@@ -334,6 +360,25 @@ type ReplyToolInput = {
   cta?: string;
 };
 
+type ReplyToolInput = {
+  about: string;
+  unclear: string;
+  can_reply: boolean;
+  replies: ReplyCandidate[];
+};
+
+function isCandidate(value: unknown): value is ReplyCandidate {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    isCommentType(candidate.comment_type) &&
+    typeof candidate.point === "string" &&
+    typeof candidate.why_specific === "string" &&
+    typeof candidate.profile_click === "string" &&
+    typeof candidate.reply === "string"
+  );
+}
+
 function isReplyToolInput(input: unknown): input is ReplyToolInput {
   if (!input || typeof input !== "object") return false;
   const value = input as Record<string, unknown>;
@@ -341,35 +386,51 @@ function isReplyToolInput(input: unknown): input is ReplyToolInput {
     typeof value.about === "string" &&
     typeof value.unclear === "string" &&
     typeof value.can_reply === "boolean" &&
-    isCommentType(value.comment_type) &&
-    typeof value.point === "string" &&
-    typeof value.why_specific === "string" &&
-    typeof value.profile_click === "string" &&
-    typeof value.reply === "string"
+    // A decline comes back with an empty array, so the array has to exist
+    // but does not have to hold anything.
+    Array.isArray(value.replies) &&
+    value.replies.every(isCandidate)
   );
 }
 
-// A reply the model believes it can write still has to be usable:
-// present, and inside the comment budget — which is far under X's limit,
-// because the budget is what keeps replies to one point and leaves room
-// for a CTA under them. Anything else earns the one corrective retry.
-function isUsableReply(input: ReplyToolInput, proofs: Proof[]): boolean {
-  return isUsableComment(input.reply) && !typeFailure(input, proofs);
-}
+// Why this candidate cannot be sent, or null when it can.
+//
+// One function rather than the five scattered conditions it replaces,
+// because with two candidates in hand the question changed. It used to be
+// "does this need a retry", answered by a boolean; it is now "which of
+// these two is usable", which needs a reason — the reason is what picks
+// the second candidate over the first, and what the retry is told when
+// neither survives.
+function candidateFailure(
+  candidate: ReplyCandidate,
+  proofs: Proof[],
+): string | null {
+  if (!isUsableComment(candidate.reply)) {
+    return `That reply is empty, over ${COMMENT_MAX} characters, or opens with a verdict on the post.`;
+  }
 
-// The reply has to have the shape of the type it just claimed. Returns
-// the sentence the retry is given, so the model is told which shape it
-// promised and did not deliver rather than "that did not work".
-function typeFailure(input: ReplyToolInput, proofs: Proof[]): string | null {
-  if (!input.can_reply) return null;
-  return (
-    violatesTypeRule(input.comment_type, input.reply) ??
+  const shape =
+    violatesTypeRule(candidate.comment_type, candidate.reply) ??
     // Shape first, then provenance: "an operator add-on needs a figure"
     // is a more useful correction than "that number is not yours" when
     // there is no number at all.
-    violatesProofRule(input.comment_type, input.reply, proofs) ??
-    wearsWitnessedProof(input.reply, proofs)
-  );
+    violatesProofRule(candidate.comment_type, candidate.reply, proofs) ??
+    wearsWitnessedProof(candidate.reply, proofs);
+  if (shape) return shape;
+
+  // A reply that names no point, or cannot say why it dies on any other
+  // post, is the model writing before it worked out what it was adding.
+  if (!isSubstantivePoint(candidate.point)) {
+    return "That `point` names nothing. Say the one thing your reply adds that the post does not already contain.";
+  }
+  if (!isSubstantiveWhySpecific(candidate.why_specific)) {
+    return '`why_specific` has to name what in THIS post the reply depends on — "it is relevant to the topic" means the reply fits anywhere, which is the reply to avoid.';
+  }
+  if (!isSubstantiveProfileClick(candidate.profile_click)) {
+    return 'Finish "this is the person who ___" with something concrete they have done or know, not an adjective and not "agrees with the post".';
+  }
+
+  return null;
 }
 
 // An `about` that describes the post's shape rather than its subject — "a
@@ -395,13 +456,42 @@ async function requestReply(body: unknown): Promise<ReplyToolInput> {
   return input;
 }
 
+// The first candidate that survives the checks, with the reason the ones
+// before it did not. Order is the ranking — the model was asked for its
+// best reply first — so taking the first usable one keeps the priority
+// and only spends the spare when the good one is broken.
+function pickCandidate(
+  input: ReplyToolInput,
+  proofs: Proof[],
+): { candidate: ReplyCandidate; index: number } | { reasons: string[] } {
+  const reasons: string[] = [];
+
+  for (const [index, candidate] of input.replies.entries()) {
+    const failure = candidateFailure(candidate, proofs);
+    if (!failure) return { candidate, index };
+    reasons.push(failure);
+  }
+
+  return { reasons };
+}
+
 // Returns the reply and what the model made of the post, or throws.
 //
-// The one corrective retry is spent on a reply the model meant to write
-// and botched — empty, over the limit, or written from an `about` too
-// vague to have come from reading. A decline is never retried: pressing a
-// model that just said it does not follow the post is how you get the
-// bluff back.
+// Two drafts arrive from one call, and the second is the whole point of
+// this shape. The checks that decide whether a reply is sendable are
+// mechanical — a shape it claimed and did not deliver, a justification
+// that names nothing — and a model that fails one of them has usually
+// written a fine reply of a different kind. Asking for that different
+// kind up front costs a few dozen output tokens; asking for it afterwards
+// costs a second round trip, on a card holding up one of eight lanes.
+//
+// The corrective retry is still here, and still one. It is now what
+// happens when both drafts fail, which is a much stronger signal than one
+// failing was — and it is told exactly what was wrong with each, because
+// a model that hears "that did not work" twice guesses twice.
+//
+// A decline is never retried: pressing a model that just said it does not
+// follow the post is how you get the bluff back.
 export async function callHaikuFeedReply(
   brandPack: BrandPackRow,
   target: ReplyTarget,
@@ -410,62 +500,85 @@ export async function callHaikuFeedReply(
   const proofs = parseProofs(brandPack.proofs);
   const request = buildFeedReplyRequest(brandPack, target, onTerritory);
   let result = await requestReply(request);
+  let picked = result.can_reply
+    ? pickCandidate(result, proofs)
+    : { reasons: [] as string[] };
+  let retried = false;
 
-  // A reply that names no point is retried for the same reason one that
-  // ran long is: both are the model writing before it worked out what it
-  // was adding.
-  // A reply that cannot say why it dies on another post is the generic
-  // reply, and it is retried for the same reason one that ran long is:
-  // both are the model writing before it worked out what it was adding.
-  const needsRetry =
-    result.can_reply &&
-    (!isUsableReply(result, proofs) ||
-      !isSubstantiveAbout(result.about) ||
-      !isSubstantivePoint(result.point) ||
-      !isSubstantiveWhySpecific(result.why_specific) ||
-      !isSubstantiveProfileClick(result.profile_click));
+  // `about` is judged apart from the drafts and can send a good pair
+  // back on its own: it is the comprehension check, and a reply written
+  // from an `about` too vague to have come from reading the post is a
+  // reply that got there by luck.
+  const understood = isSubstantiveAbout(result.about);
 
-  if (needsRetry) {
+  if (result.can_reply && ("reasons" in picked || !understood)) {
+    const reasons = "reasons" in picked ? picked.reasons : [];
     result = await requestReply({
       ...request,
       messages: [
         ...request.messages,
         {
           role: "assistant",
-          content: `Previous about: ${result.about}\nPrevious comment_type: ${result.comment_type}\nPrevious point: ${result.point}\nPrevious reply: ${result.reply}`,
+          content: [
+            `Previous about: ${result.about}`,
+            ...result.replies.map(
+              (candidate, index) =>
+                `Previous reply ${index + 1} (${candidate.comment_type}): ${candidate.reply}`,
+            ),
+          ].join("\n"),
         },
         {
           role: "user",
-          content:
-            `${typeFailure(result, proofs) ?? "That did not work."} In \`about\`, name the specific thing this post is about — the tool, claim, event or argument — not the kind of post it is. In \`point\`, name the one thing your reply adds that the post does not already say. In \`why_specific\`, name what in THIS post the reply depends on — "it is relevant to the topic" means you have written a reply that fits anywhere, so write a different one. In \`profile_click\`, finish "this is the person who ___" with something concrete. Then write that reply, ${COMMENT_MAX} characters or fewer. If you genuinely cannot tell what the post is about, set can_reply to false and leave the reply empty; that is a fine answer.`,
+          content: [
+            reasons.length
+              ? `Neither reply can be sent. ${reasons.map((reason, index) => `Reply ${index + 1}: ${reason}`).join(" ")}`
+              : "",
+            understood
+              ? ""
+              : "And `about` describes the kind of post this is rather than what it says. Name the specific thing — the tool, claim, event or argument.",
+            `Write two more, ${COMMENT_MAX} characters or fewer each, in two different shapes you can actually fill. If you genuinely cannot tell what the post is about, set can_reply to false and leave \`replies\` empty; that is a fine answer.`,
+          ]
+            .filter(Boolean)
+            .join(" "),
         },
       ],
     });
+
+    retried = true;
+    picked = result.can_reply
+      ? pickCandidate(result, proofs)
+      : { reasons: [] as string[] };
   }
 
   const about = result.about.trim();
   const unclear = result.unclear.trim() || null;
 
-  // A second failure is a decline rather than a third attempt: the
-  // fields that keep failing are the ones that say there is no specific
-  // comment here, and "no comment" is a correct answer.
-  if (
-    !result.can_reply ||
-    !isUsableReply(result, proofs) ||
-    !isSubstantiveWhySpecific(result.why_specific) ||
-    !isSubstantiveProfileClick(result.profile_click)
-  ) {
-    return { reply: null, commentType: null, about, unclear, cta: null };
+  // A second failure is a decline rather than a third attempt: four
+  // drafts that all failed the same mechanical checks are the model
+  // saying there is no specific comment here, and "no comment" is a
+  // correct answer.
+  if (!result.can_reply || "reasons" in picked) {
+    return {
+      reply: null,
+      commentType: null,
+      about,
+      unclear,
+      cta: null,
+      source: null,
+      retried,
+    };
   }
 
   return {
-    reply: result.reply.trim(),
-    commentType: result.comment_type,
+    reply: picked.candidate.reply.trim(),
+    commentType: picked.candidate.comment_type,
     about,
     unclear,
     // Absent from the tool off territory, so this is null for almost
     // every card by construction rather than by policy.
-    cta: cleanCta(result.cta),
+    cta: cleanCta(picked.candidate.cta),
+    source: picked.index === 0 ? "primary" : "alternate",
+    retried,
   };
 }
 
@@ -473,6 +586,8 @@ export function buildMockFeedReply(target: ReplyTarget): FeedReplyResult {
   const snippet = (target.content ?? "").trim().slice(0, 80);
   return {
     commentType: "question",
+    source: "primary",
+    retried: false,
     reply: `[Mock reply to @${target.handle}] re: "${snippet}" — set ANTHROPIC_API_KEY to have Haiku read this post and write a real reply.`,
     about: `A mock reading of @${target.handle}'s post, produced without a model.`,
     unclear: null,

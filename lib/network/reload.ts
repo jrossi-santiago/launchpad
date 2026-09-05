@@ -66,6 +66,15 @@ export type ReloadSummary = {
   // turned on something it was not given. Not a failure — the alternative
   // was a reply that pretended.
   declined: number;
+  // Replies that came from the spare draft rather than the first one —
+  // cards whose best reply failed its shape check and were saved by the
+  // second one arriving in the same call. Each of these would have cost a
+  // second round trip before.
+  alternate: number;
+  // Cards where both drafts failed and a corrective second call was
+  // spent, whether or not it produced anything. What alternate did not
+  // catch.
+  retried: number;
   // True when the budget, not the work, is what ended the run — the UI
   // says so rather than leaving unexplained cards without replies.
   budgetReached: boolean;
@@ -222,6 +231,8 @@ export async function writeReloadReplies(
     failed: 0,
     onTerritory: 0,
     declined: 0,
+    alternate: 0,
+    retried: 0,
     budgetReached: false,
   };
 
@@ -281,6 +292,9 @@ export async function writeReloadReplies(
       }
 
       results.set(card.id, result);
+
+      if (result.retried) summary.retried += 1;
+      if (result.source === "alternate") summary.alternate += 1;
 
       if (!result.reply) {
         summary.declined += 1;

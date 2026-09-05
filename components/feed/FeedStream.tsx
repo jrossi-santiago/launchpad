@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { TypeChip } from "@/components/comment/TypeChip";
 import { CtaToggle } from "@/components/comment/CtaToggle";
 import { isFreshReply, newestSweepId, type FeedCard } from "@/lib/network/stack";
-import type { ReloadEvent } from "@/lib/network/reload";
+import type { ReloadEvent, ReloadSummary } from "@/lib/network/reload";
 import { readNdjson } from "@/lib/network/ndjson";
 import { copyAndOpenReply, withCta } from "@/lib/x/intent";
 import { formatAge } from "@/components/network/NetworkCard";
@@ -70,17 +70,6 @@ type CardState = "live" | "liking" | "liked" | "gone";
 // Reload writes replies for posts that have none; Re-Write throws out
 // what is there and writes the lot again.
 type ReloadMode = "reload" | "rewrite";
-
-// What one Reload did, as the route reports it.
-type ReloadSummary = {
-  considered: number;
-  written: number;
-  reused: number;
-  failed: number;
-  onTerritory: number;
-  declined: number;
-  budgetReached: boolean;
-};
 
 // Reload and Re-Write are the only things on this page that can take a
 // minute, so they say what they did rather than spinning silently.
