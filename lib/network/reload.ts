@@ -7,7 +7,7 @@ import {
   type ReplyTarget,
 } from "@/lib/anthropic/feedReply";
 import { pickOnTerritory } from "@/lib/anthropic/onTerritory";
-import type { FeedCard, NetworkStack } from "@/lib/network/stack";
+import { STACK_WINDOW, type FeedCard, type NetworkStack } from "@/lib/network/stack";
 
 // What Reload means, in one place.
 //
@@ -17,15 +17,15 @@ import type { FeedCard, NetworkStack } from "@/lib/network/stack";
 // Haiku read each one and write a reply for it before the Feed renders.
 
 // Per account, per Reload — the whole of a stack, since STACK_WINDOW is
-// what a Feed holds per account in the first place. It started at five,
-// which left the older half of every stack sitting there reply-less for
-// no reason a user could see.
-export const RELOAD_PER_PROFILE = 10;
+// what a Feed holds per account in the first place. It tracks that
+// window: anything smaller leaves the older half of every stack sitting
+// there reply-less for no reason a user could see.
+export const RELOAD_PER_PROFILE = STACK_WINDOW;
 
 // The ceiling on model calls one Reload may make, and the binding limit
-// for anyone watching more than three accounts: twenty-five accounts at
-// ten posts each is 250 replies, which is neither affordable nor within a
-// request timeout. The newest posts across all accounts win and the rest
+// for anyone watching more than seven accounts: twenty-five accounts at
+// four posts each is 100 replies, which is neither affordable nor within
+// a request timeout. The newest posts across all accounts win and the rest
 // keep their cards without a reply, which is what "Reload again for the
 // rest" in the summary is telling you.
 //
