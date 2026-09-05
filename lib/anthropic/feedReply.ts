@@ -74,13 +74,14 @@ function saveReplyTool(onTerritory: boolean, proofs: Proof[]) {
       properties: {
         about: {
           type: "string",
-          description:
-            "What this post is actually saying, in plain language, as you would explain it to someone who had not seen it. Name the specific thing it is about — the tool, the claim, the event, the argument. Not a description of its shape ('a post about productivity'), and not a restatement of its words.",
+          maxLength: ABOUT_MAX_WORDS * 7,
+          description: `What this post is actually saying, as you would explain it to someone who had not seen it. Name the specific thing — the tool, the claim, the event, the argument. ${ABOUT_MIN_WORDS}-${ABOUT_MAX_WORDS} words. Not the kind of post it is ("a post about productivity"), and not its own words repeated back.`,
         },
         unclear: {
           type: "string",
+          maxLength: 180,
           description:
-            "What you cannot tell from what you were given: a link you cannot open, an image you cannot see, a person or product you do not recognise, jargon whose meaning changes the point, a conversation you are missing. Empty string when the post stands on its own.",
+            "What you were not given that this post turns on: a link you cannot open, an image you cannot see, a person, product or in-joke you do not recognise. Name them, at most 25 words. Empty string when the post stands on its own — which is the common case.",
         },
         can_reply: {
           type: "boolean",
@@ -349,6 +350,9 @@ export type FeedReplyResult = {
   // question the data can answer.
   source: "primary" | "alternate" | null;
   retried: boolean;
+  // Which checks rejected a draft on the way here, in order. Empty on the
+  // common path, where the first draft was fine.
+  rejected: CandidateFailure[];
 };
 
 type ReplyCandidate = {
@@ -393,6 +397,19 @@ function isReplyToolInput(input: unknown): input is ReplyToolInput {
   );
 }
 
+// Which check rejected a draft, and what the retry is told about it.
+//
+// The field is the half that is new, and it is here to keep the length
+// windows honest. Capping `point`, `why_specific` and `profile_click`
+// makes them cheaper to generate; it would also be the obvious way to
+// make them fail their own minimums, and a draft rejected for running
+// short costs far more than the padding ever did. Counting the rejections
+// by field is how that shows up as a number rather than as a surprise.
+export type CandidateFailure = {
+  field: "reply" | "shape" | "point" | "why_specific" | "profile_click";
+  reason: string;
+};
+
 // Why this candidate cannot be sent, or null when it can.
 //
 // One function rather than the five scattered conditions it replaces,
@@ -404,9 +421,12 @@ function isReplyToolInput(input: unknown): input is ReplyToolInput {
 function candidateFailure(
   candidate: ReplyCandidate,
   proofs: Proof[],
-): string | null {
+): CandidateFailure | null {
   if (!isUsableComment(candidate.reply)) {
-    return `That reply is empty, over ${COMMENT_MAX} characters, or opens with a verdict on the post.`;
+    return {
+      field: "reply",
+      reason: `That reply is empty, over ${COMMENT_MAX} characters, or opens with a verdict on the post.`,
+    };
   }
 
   const shape =
@@ -416,18 +436,27 @@ function candidateFailure(
     // there is no number at all.
     violatesProofRule(candidate.comment_type, candidate.reply, proofs) ??
     wearsWitnessedProof(candidate.reply, proofs);
-  if (shape) return shape;
+  if (shape) return { field: "shape", reason: shape };
 
   // A reply that names no point, or cannot say why it dies on any other
   // post, is the model writing before it worked out what it was adding.
   if (!isSubstantivePoint(candidate.point)) {
-    return "That `point` names nothing. Say the one thing your reply adds that the post does not already contain.";
+    return {
+      field: "point",
+      reason: "That `point` names nothing. Say the one thing your reply adds that the post does not already contain.",
+    };
   }
   if (!isSubstantiveWhySpecific(candidate.why_specific)) {
-    return '`why_specific` has to name what in THIS post the reply depends on — "it is relevant to the topic" means the reply fits anywhere, which is the reply to avoid.';
+    return {
+      field: "why_specific",
+      reason: '`why_specific` has to name what in THIS post the reply depends on — "it is relevant to the topic" means the reply fits anywhere, which is the reply to avoid.',
+    };
   }
   if (!isSubstantiveProfileClick(candidate.profile_click)) {
-    return 'Finish "this is the person who ___" with something concrete they have done or know, not an adjective and not "agrees with the post".';
+    return {
+      field: "profile_click",
+      reason: 'Finish "this is the person who ___" with something concrete they have done or know, not an adjective and not "agrees with the post".',
+    };
   }
 
   return null;
@@ -437,8 +466,15 @@ function candidateFailure(
 // post about productivity", "sharing an opinion" — is the tell that the
 // model has not read it. Cheap to catch: a real one names things, so it
 // runs longer than a category does.
+//
+// Both ends of the window are in the field description now, read from
+// these constants, so the model is aiming at the range it is marked
+// against rather than guessing at a floor it was never shown.
+export const ABOUT_MIN_WORDS = 6;
+export const ABOUT_MAX_WORDS = 20;
+
 function isSubstantiveAbout(about: string): boolean {
-  return about.trim().split(/\s+/).length >= 6;
+  return about.trim().split(/\s+/).length >= ABOUT_MIN_WORDS;
 }
 
 // Eight of these run at once during a sweep, so the rate limiter is an
@@ -456,6 +492,19 @@ async function requestReply(body: unknown): Promise<ReplyToolInput> {
   return input;
 }
 
+// A draft that survived, or the reasons none did — carrying, either way,
+// every rejection collected on the path. Tagged rather than inferred from
+// which properties are present: a union told apart by `ok` narrows in one
+// step, and the alternative asks the type checker to guess.
+type Picked =
+  | {
+      ok: true;
+      candidate: ReplyCandidate;
+      index: number;
+      failures: CandidateFailure[];
+    }
+  | { ok: false; failures: CandidateFailure[] };
+
 // The first candidate that survives the checks, with the reason the ones
 // before it did not. Order is the ranking — the model was asked for its
 // best reply first — so taking the first usable one keeps the priority
@@ -463,16 +512,16 @@ async function requestReply(body: unknown): Promise<ReplyToolInput> {
 function pickCandidate(
   input: ReplyToolInput,
   proofs: Proof[],
-): { candidate: ReplyCandidate; index: number } | { reasons: string[] } {
-  const reasons: string[] = [];
+): Picked {
+  const failures: CandidateFailure[] = [];
 
   for (const [index, candidate] of input.replies.entries()) {
     const failure = candidateFailure(candidate, proofs);
-    if (!failure) return { candidate, index };
-    reasons.push(failure);
+    if (!failure) return { ok: true, candidate, index, failures };
+    failures.push(failure);
   }
 
-  return { reasons };
+  return { ok: false, failures };
 }
 
 // Returns the reply and what the model made of the post, or throws.
@@ -502,8 +551,12 @@ export async function callHaikuFeedReply(
   let result = await requestReply(request);
   let picked = result.can_reply
     ? pickCandidate(result, proofs)
-    : { reasons: [] as string[] };
+    : ({ ok: false, failures: [] } as Picked);
   let retried = false;
+  // Every rejection this card produced, across both attempts. The tally
+  // is what says whether the length windows are costing more drafts than
+  // the padding they removed.
+  const rejected: CandidateFailure[] = [...picked.failures];
 
   // `about` is judged apart from the drafts and can send a good pair
   // back on its own: it is the comprehension check, and a reply written
@@ -511,8 +564,8 @@ export async function callHaikuFeedReply(
   // reply that got there by luck.
   const understood = isSubstantiveAbout(result.about);
 
-  if (result.can_reply && ("reasons" in picked || !understood)) {
-    const reasons = "reasons" in picked ? picked.reasons : [];
+  if (result.can_reply && (!picked.ok || !understood)) {
+    const reasons = picked.failures.map((failure) => failure.reason);
     result = await requestReply({
       ...request,
       messages: [
@@ -547,7 +600,8 @@ export async function callHaikuFeedReply(
     retried = true;
     picked = result.can_reply
       ? pickCandidate(result, proofs)
-      : { reasons: [] as string[] };
+      : ({ ok: false, failures: [] } as Picked);
+    rejected.push(...picked.failures);
   }
 
   const about = result.about.trim();
@@ -557,7 +611,7 @@ export async function callHaikuFeedReply(
   // drafts that all failed the same mechanical checks are the model
   // saying there is no specific comment here, and "no comment" is a
   // correct answer.
-  if (!result.can_reply || "reasons" in picked) {
+  if (!result.can_reply || !picked.ok) {
     return {
       reply: null,
       commentType: null,
@@ -566,6 +620,7 @@ export async function callHaikuFeedReply(
       cta: null,
       source: null,
       retried,
+      rejected,
     };
   }
 
@@ -579,6 +634,7 @@ export async function callHaikuFeedReply(
     cta: cleanCta(picked.candidate.cta),
     source: picked.index === 0 ? "primary" : "alternate",
     retried,
+    rejected,
   };
 }
 
@@ -588,6 +644,7 @@ export function buildMockFeedReply(target: ReplyTarget): FeedReplyResult {
     commentType: "question",
     source: "primary",
     retried: false,
+    rejected: [],
     reply: `[Mock reply to @${target.handle}] re: "${snippet}" — set ANTHROPIC_API_KEY to have Haiku read this post and write a real reply.`,
     about: `A mock reading of @${target.handle}'s post, produced without a model.`,
     unclear: null,

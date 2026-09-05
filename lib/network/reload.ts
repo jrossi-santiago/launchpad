@@ -75,6 +75,16 @@ export type ReloadSummary = {
   // spent, whether or not it produced anything. What alternate did not
   // catch.
   retried: number;
+  // Every draft rejection this sweep made, counted by the check that
+  // made it — `shape`, `point`, `why_specific`, `profile_click`, `reply`.
+  //
+  // This is the one that keeps the length windows honest. The fields in
+  // front of the comment are capped to keep them cheap to generate, and
+  // the obvious way for that to go wrong is a field so short it fails its
+  // own minimum, which costs a whole draft to save a few tokens. If
+  // `point` or `why_specific` starts climbing here after a cap moves,
+  // that is the cap being too tight, stated as a number.
+  rejected: Record<string, number>;
   // True when the budget, not the work, is what ended the run — the UI
   // says so rather than leaving unexplained cards without replies.
   budgetReached: boolean;
@@ -233,6 +243,7 @@ export async function writeReloadReplies(
     declined: 0,
     alternate: 0,
     retried: 0,
+    rejected: {},
     budgetReached: false,
   };
 
@@ -295,6 +306,10 @@ export async function writeReloadReplies(
 
       if (result.retried) summary.retried += 1;
       if (result.source === "alternate") summary.alternate += 1;
+      for (const failure of result.rejected) {
+        summary.rejected[failure.field] =
+          (summary.rejected[failure.field] ?? 0) + 1;
+      }
 
       if (!result.reply) {
         summary.declined += 1;
