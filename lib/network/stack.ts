@@ -5,7 +5,13 @@ import type { TweetMetrics } from "@/lib/getx/tweet";
 // Network is a rolling window, not an inbox: one poll of
 // GET /twitter/user/tweets keeps the newest posts per account, and a stack
 // shows that window minus whatever you have already sent or skipped.
-export const STACK_WINDOW = 10;
+//
+// Four, not ten. The window is per account, so it multiplies by however
+// many accounts are watched: at fourteen, ten each is a hundred and forty
+// cards to scroll and the Feed stops being a thing you can get through.
+// Four of the newest from each of the people you watch, inside the day,
+// is a sitting — the rest is what the account's own timeline is for.
+export const STACK_WINDOW = 4;
 
 // Nothing scarce is consumed per account any more — the old cap was one
 // GetXAPI monitor slot each — so the limit is a call budget: one request
@@ -22,8 +28,8 @@ export const POLL_TTL_MS = 3 * 60 * 1000;
 // The Feed used to be "every post from a watched account you have not
 // decided on yet", which sounds like an inbox and behaves like a landfill.
 // A stack only ever shows STACK_WINDOW posts per account, so an account
-// that posts a lot leaves undecided rows behind every poll; clear the ten
-// on screen and the ten underneath — days old, in no particular order —
+// that posts a lot leaves undecided rows behind every poll; clear the few
+// on screen and the ones underneath — days old, in no particular order —
 // take their place. That is the "old random tweets" problem, and no
 // amount of marking things done fixes it, because the backlog is deeper
 // than the window.
