@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { BrandPackRow } from "@/lib/anthropic/brandPack";
 import { InterviewWizard } from "@/components/brand-pack/InterviewWizard";
 import { BrandPackEditor } from "@/components/brand-pack/BrandPackEditor";
+import { ProofsEditor } from "@/components/brand-pack/ProofsEditor";
 
 export function BrandPackHome({
   initialBrandPack,
@@ -26,12 +27,18 @@ export function BrandPackHome({
   }
 
   if (pack) {
+    // Proofs sit under the pack rather than inside the editor: the editor
+    // saves the four fields the interview wrote, and proofs save on their
+    // own, because they are the one part a model never touches.
     return (
-      <BrandPackEditor
-        pack={pack}
-        onSaved={setPack}
-        onRedo={() => setShowWizard(true)}
-      />
+      <div className="flex flex-1 flex-col gap-6">
+        <BrandPackEditor
+          pack={pack}
+          onSaved={setPack}
+          onRedo={() => setShowWizard(true)}
+        />
+        <ProofsEditor pack={pack} onSaved={setPack} />
+      </div>
     );
   }
 

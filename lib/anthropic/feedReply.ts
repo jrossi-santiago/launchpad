@@ -5,17 +5,31 @@ import {
   CTA_FIELD,
   CTA_RULES,
   POINT_FIELD,
+  PROFILE_CLICK_FIELD,
+  SPECIFICITY_RULES,
+  WHY_SPECIFIC_FIELD,
   cleanCta,
   isSubstantivePoint,
+  isSubstantiveProfileClick,
+  isSubstantiveWhySpecific,
   isUsableComment,
 } from "@/lib/anthropic/comment";
 import {
-  COMMENT_TYPE_FIELD,
-  COMMENT_TYPE_RULES,
+  commentTypeField,
+  commentTypeRules,
   isCommentType,
   violatesTypeRule,
   type CommentType,
 } from "@/lib/anthropic/commentTypes";
+import {
+  legalCommentTypes,
+  parseProofs,
+  proofPayload,
+  proofRules,
+  violatesProofRule,
+  wearsWitnessedProof,
+  type Proof,
+} from "@/lib/anthropic/proofs";
 import type { PostContext, QuotedPost } from "@/lib/getx/userTweets";
 
 // One reply, written for one post, for the Feed's Reload button.
@@ -48,7 +62,8 @@ export type ReplyTarget = {
 // note below), so there is nothing for an honest ask to name — and a
 // model asked for one anyway would invent the asset. A tool with no `cta`
 // property cannot be answered with a made-up one.
-function saveReplyTool(onTerritory: boolean) {
+function saveReplyTool(onTerritory: boolean, proofs: Proof[]) {
+  const typeField = commentTypeField(legalCommentTypes(proofs));
   return {
     name: "save_reply",
     description:
@@ -72,11 +87,13 @@ function saveReplyTool(onTerritory: boolean) {
             "True only if you could reply as someone who genuinely follows this, without guessing at anything in `unclear`. False if a reply would require pretending to know what this is about.",
         },
         comment_type: {
-          ...COMMENT_TYPE_FIELD,
+          ...typeField,
           description:
-            `Which of the four kinds of reply this is, chosen before you write it. When can_reply is false, answer "question"; it is ignored. ${COMMENT_TYPE_FIELD.description}`,
+            `Which kind of reply this is, chosen before you write it. When can_reply is false, answer "question"; it is ignored. ${typeField.description}`,
         },
         point: POINT_FIELD,
+        why_specific: WHY_SPECIFIC_FIELD,
+        profile_click: PROFILE_CLICK_FIELD,
         reply: {
           type: "string",
           maxLength: COMMENT_MAX,
@@ -90,6 +107,8 @@ function saveReplyTool(onTerritory: boolean) {
         "can_reply",
         "comment_type",
         "point",
+        "why_specific",
+        "profile_click",
         "reply",
         ...(onTerritory ? ["cta"] : []),
       ],
@@ -139,7 +158,8 @@ function saveReplyTool(onTerritory: boolean) {
 // the few posts a first pass judged genuinely adjacent, they are included
 // and the prompt says how to use them: as things this person knows, never
 // as things they sell.
-const SYSTEM_PROMPT = [
+function systemPromptLines(proofs: Proof[]): string[] {
+  return [
   "You write X (Twitter) replies for a founder, in their own voice, from their Brand Pack.",
   "You are given one post. Write one reply to that post.",
   "",
@@ -164,8 +184,11 @@ const SYSTEM_PROMPT = [
   ...BREVITY_RULES,
   "The founder's voice guardrails ('never say') override everything above.",
   "",
-  "A reply worth leaving is one of exactly four kinds, and `comment_type` names which before you write it:",
-  ...COMMENT_TYPE_RULES,
+  "A reply worth leaving is one of a small number of kinds, and `comment_type` names which before you write it:",
+  ...commentTypeRules(legalCommentTypes(proofs)),
+  ...proofRules(proofs),
+  "",
+  ...SPECIFICITY_RULES,
   "",
   "Name what your reply adds in `point` before you write it — the result you got, the case that went the other way, the detail people miss, the thing you actually want to know. A reply whose only point is that the post is right is not a reply; say what you would want to know instead.",
   "",
@@ -181,7 +204,8 @@ const SYSTEM_PROMPT = [
   "- your reply would work just as well if the subject were something else entirely",
   "",
   "Declining is a good answer and costs nothing. A person who did not follow a post scrolls past it; they do not reply anyway and hope. Never write a reply that gestures vaguely at a post you did not understand, and never cover a gap with enthusiasm.",
-];
+  ];
+}
 
 // Almost every reply. There is no agenda in the request to steer towards,
 // and this says out loud that there is nowhere to get to — a model with
@@ -207,9 +231,9 @@ const ON_TERRITORY_PROMPT = [
   ...CTA_RULES,
 ];
 
-function systemPrompt(onTerritory: boolean): string {
+function systemPrompt(onTerritory: boolean, proofs: Proof[]): string {
   return [
-    ...SYSTEM_PROMPT,
+    ...systemPromptLines(proofs),
     ...(onTerritory ? ON_TERRITORY_PROMPT : OFF_TERRITORY_PROMPT),
   ].join("\n");
 }
@@ -219,10 +243,14 @@ export function buildFeedReplyRequest(
   target: ReplyTarget,
   onTerritory = false,
 ) {
+  // The proof list travels with the Brand Pack, so every caller that
+  // already loads one gets the gate without changing.
+  const proofs = parseProofs(brandPack.proofs);
+
   return {
     model: "claude-haiku-4-5-20251001",
-    max_tokens: 512,
-    system: systemPrompt(onTerritory),
+    max_tokens: 640,
+    system: systemPrompt(onTerritory, proofs),
     messages: [
       {
         role: "user",
@@ -234,6 +262,10 @@ export function buildFeedReplyRequest(
           // text to reuse: a Reload that handed back a template would be
           // the generic reply this feature replaces.
           voice_samples: brandPack.reply_templates,
+          // The only results this reply may claim. Sent as data next to
+          // the post rather than folded into the prompt, so an empty
+          // list reads as "you have none" instead of disappearing.
+          ...(proofs.length ? { proofs_you_may_use: proofPayload(proofs) } : {}),
           // The agenda half, and only when the post is actually about it.
           // Spread rather than set to null, so an off-territory request
           // does not carry the keys at all — a model shown `icp: null`
@@ -268,7 +300,7 @@ export function buildFeedReplyRequest(
         }),
       },
     ],
-    tools: [saveReplyTool(onTerritory)],
+    tools: [saveReplyTool(onTerritory, proofs)],
     tool_choice: { type: "tool", name: "save_reply" },
   };
 }
@@ -295,6 +327,8 @@ type ReplyToolInput = {
   can_reply: boolean;
   comment_type: CommentType;
   point: string;
+  why_specific: string;
+  profile_click: string;
   reply: string;
   cta?: string;
 };
@@ -308,6 +342,8 @@ function isReplyToolInput(input: unknown): input is ReplyToolInput {
     typeof value.can_reply === "boolean" &&
     isCommentType(value.comment_type) &&
     typeof value.point === "string" &&
+    typeof value.why_specific === "string" &&
+    typeof value.profile_click === "string" &&
     typeof value.reply === "string"
   );
 }
@@ -316,16 +352,23 @@ function isReplyToolInput(input: unknown): input is ReplyToolInput {
 // present, and inside the comment budget — which is far under X's limit,
 // because the budget is what keeps replies to one point and leaves room
 // for a CTA under them. Anything else earns the one corrective retry.
-function isUsableReply(input: ReplyToolInput): boolean {
-  return isUsableComment(input.reply) && !typeFailure(input);
+function isUsableReply(input: ReplyToolInput, proofs: Proof[]): boolean {
+  return isUsableComment(input.reply) && !typeFailure(input, proofs);
 }
 
 // The reply has to have the shape of the type it just claimed. Returns
 // the sentence the retry is given, so the model is told which shape it
 // promised and did not deliver rather than "that did not work".
-function typeFailure(input: ReplyToolInput): string | null {
+function typeFailure(input: ReplyToolInput, proofs: Proof[]): string | null {
   if (!input.can_reply) return null;
-  return violatesTypeRule(input.comment_type, input.reply);
+  return (
+    violatesTypeRule(input.comment_type, input.reply) ??
+    // Shape first, then provenance: "an operator add-on needs a figure"
+    // is a more useful correction than "that number is not yours" when
+    // there is no number at all.
+    violatesProofRule(input.comment_type, input.reply, proofs) ??
+    wearsWitnessedProof(input.reply, proofs)
+  );
 }
 
 // An `about` that describes the post's shape rather than its subject — "a
@@ -385,17 +428,23 @@ export async function callHaikuFeedReply(
   target: ReplyTarget,
   onTerritory = false,
 ): Promise<FeedReplyResult> {
+  const proofs = parseProofs(brandPack.proofs);
   const request = buildFeedReplyRequest(brandPack, target, onTerritory);
   let result = await requestReply(request);
 
   // A reply that names no point is retried for the same reason one that
   // ran long is: both are the model writing before it worked out what it
   // was adding.
+  // A reply that cannot say why it dies on another post is the generic
+  // reply, and it is retried for the same reason one that ran long is:
+  // both are the model writing before it worked out what it was adding.
   const needsRetry =
     result.can_reply &&
-    (!isUsableReply(result) ||
+    (!isUsableReply(result, proofs) ||
       !isSubstantiveAbout(result.about) ||
-      !isSubstantivePoint(result.point));
+      !isSubstantivePoint(result.point) ||
+      !isSubstantiveWhySpecific(result.why_specific) ||
+      !isSubstantiveProfileClick(result.profile_click));
 
   if (needsRetry) {
     result = await requestReply({
@@ -409,7 +458,7 @@ export async function callHaikuFeedReply(
         {
           role: "user",
           content:
-            `${typeFailure(result) ?? "That did not work."} In \`about\`, name the specific thing this post is about — the tool, claim, event or argument — not the kind of post it is. In \`point\`, name the one thing your reply adds that the post does not already say. Then write that reply, ${COMMENT_MAX} characters or fewer. If you genuinely cannot tell what the post is about, set can_reply to false and leave the reply empty; that is a fine answer.`,
+            `${typeFailure(result, proofs) ?? "That did not work."} In \`about\`, name the specific thing this post is about — the tool, claim, event or argument — not the kind of post it is. In \`point\`, name the one thing your reply adds that the post does not already say. In \`why_specific\`, name what in THIS post the reply depends on — "it is relevant to the topic" means you have written a reply that fits anywhere, so write a different one. In \`profile_click\`, finish "this is the person who ___" with something concrete. Then write that reply, ${COMMENT_MAX} characters or fewer. If you genuinely cannot tell what the post is about, set can_reply to false and leave the reply empty; that is a fine answer.`,
         },
       ],
     });
@@ -418,7 +467,15 @@ export async function callHaikuFeedReply(
   const about = result.about.trim();
   const unclear = result.unclear.trim() || null;
 
-  if (!result.can_reply || !isUsableReply(result)) {
+  // A second failure is a decline rather than a third attempt: the
+  // fields that keep failing are the ones that say there is no specific
+  // comment here, and "no comment" is a correct answer.
+  if (
+    !result.can_reply ||
+    !isUsableReply(result, proofs) ||
+    !isSubstantiveWhySpecific(result.why_specific) ||
+    !isSubstantiveProfileClick(result.profile_click)
+  ) {
     return { reply: null, commentType: null, about, unclear, cta: null };
   }
 

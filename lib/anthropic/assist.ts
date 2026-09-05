@@ -7,12 +7,21 @@ import {
   isUsableComment,
 } from "@/lib/anthropic/comment";
 import {
-  COMMENT_TYPE_FIELD,
-  COMMENT_TYPE_RULES,
+  commentTypeField,
+  commentTypeRules,
   isCommentType,
   violatesTypeRule,
   type CommentType,
 } from "@/lib/anthropic/commentTypes";
+import {
+  legalCommentTypes,
+  parseProofs,
+  proofPayload,
+  proofRules,
+  violatesProofRule,
+  wearsWitnessedProof,
+  type Proof,
+} from "@/lib/anthropic/proofs";
 import type { ReplyTarget } from "@/lib/anthropic/feedReply";
 
 // What to do with a post the model read and declined.
@@ -63,14 +72,16 @@ export type AssistResult = {
 // `steer` gets the full enum back, because the founder has just supplied
 // the ground the model was missing and any of the four may now be
 // honestly available.
-function saveCommentTool(mode: AssistMode) {
+function saveCommentTool(mode: AssistMode, proofs: Proof[]) {
   return {
     name: "save_comment",
     description: "Save one reply to this post.",
     input_schema: {
       type: "object",
       properties: {
-        ...(mode === "steer" ? { comment_type: COMMENT_TYPE_FIELD } : {}),
+        ...(mode === "steer"
+          ? { comment_type: commentTypeField(legalCommentTypes(proofs)) }
+          : {}),
         point: POINT_FIELD,
         comment: {
           type: "string",
@@ -144,14 +155,24 @@ const STEER_PROMPT = [
   "",
   ...SHARED_RULES,
   "",
-  "The reply is one of exactly four kinds, named in `comment_type` before you write it:",
-  ...COMMENT_TYPE_RULES,
+  "The reply is one of a small number of kinds, named in `comment_type` before you write it:",
+  "__COMMENT_TYPE_RULES__",
   "",
   "Name what your reply adds in `point` before you write it — the result, the case that went the other way, the detail people miss, the thing you want to know.",
 ];
 
-function systemPrompt(mode: AssistMode): string {
-  return (mode === "ask" ? ASK_PROMPT : STEER_PROMPT).join("\n");
+// The type rules and the proof list are spliced in rather than baked
+// into STEER_PROMPT, because both depend on what the founder can prove
+// and the prompt is a module-level constant.
+function systemPrompt(mode: AssistMode, proofs: Proof[]): string {
+  const lines = mode === "ask" ? ASK_PROMPT : STEER_PROMPT;
+  return lines
+    .flatMap((line) =>
+      line === "__COMMENT_TYPE_RULES__"
+        ? [...commentTypeRules(legalCommentTypes(proofs)), ...proofRules(proofs)]
+        : [line],
+    )
+    .join("\n");
 }
 
 export function buildAssistRequest(
@@ -160,10 +181,12 @@ export function buildAssistRequest(
   mode: AssistMode,
   options: { unclear: string | null; note: string | null },
 ) {
+  const proofs = parseProofs(brandPack.proofs);
+
   return {
     model: "claude-haiku-4-5-20251001",
     max_tokens: 512,
-    system: systemPrompt(mode),
+    system: systemPrompt(mode, proofs),
     messages: [
       {
         role: "user",
@@ -174,6 +197,7 @@ export function buildAssistRequest(
           // and nothing for a reply to steer towards.
           voice_notes: brandPack.voice_notes,
           voice_samples: brandPack.reply_templates,
+          ...(proofs.length ? { proofs_you_may_use: proofPayload(proofs) } : {}),
           post: {
             author: `@${target.handle}`,
             author_name: target.display_name,
@@ -199,7 +223,7 @@ export function buildAssistRequest(
         }),
       },
     ],
-    tools: [saveCommentTool(mode)],
+    tools: [saveCommentTool(mode, proofs)],
     tool_choice: { type: "tool", name: "save_comment" },
   };
 }
@@ -230,10 +254,14 @@ function typeOf(mode: AssistMode, input: AssistToolInput): CommentType | null {
 // rules like any other question — ends at the question mark, names the
 // specific thing, no 'thoughts?' — which is the point of forcing the type
 // rather than letting the model pick one.
-function failureOf(mode: AssistMode, input: AssistToolInput): string | null {
+function failureOf(
+  mode: AssistMode,
+  input: AssistToolInput,
+  proofs: Proof[],
+): string | null {
   const type = typeOf(mode, input);
   if (!type) {
-    return "Name which of the four kinds of comment this is in `comment_type`, and write the comment in that shape.";
+    return "Name which kind of comment this is in `comment_type`, and write the comment in that shape.";
   }
   if (!isUsableComment(input.comment)) {
     return `That comment was not usable. It must be present, ${COMMENT_MAX} characters or fewer, and must not open by grading the post.`;
@@ -241,7 +269,11 @@ function failureOf(mode: AssistMode, input: AssistToolInput): string | null {
   if (!isSubstantivePoint(input.point)) {
     return "Name the one thing this comment adds in `point` — concretely, in a clause. If you cannot name it, there is no comment to write.";
   }
-  return violatesTypeRule(type, input.comment);
+  return (
+    violatesTypeRule(type, input.comment) ??
+    violatesProofRule(type, input.comment, proofs) ??
+    wearsWitnessedProof(input.comment, proofs)
+  );
 }
 
 async function requestComment(body: unknown): Promise<AssistToolInput> {
@@ -294,9 +326,10 @@ export async function callHaikuAssist(
   mode: AssistMode,
   options: { unclear: string | null; note: string | null },
 ): Promise<AssistResult> {
+  const proofs = parseProofs(brandPack.proofs);
   const request = buildAssistRequest(brandPack, target, mode, options);
   let result = await requestComment(request);
-  let failure = failureOf(mode, result);
+  let failure = failureOf(mode, result, proofs);
 
   if (failure) {
     result = await requestComment({
@@ -310,7 +343,7 @@ export async function callHaikuAssist(
         { role: "user", content: `${failure} Write it again.` },
       ],
     });
-    failure = failureOf(mode, result);
+    failure = failureOf(mode, result, proofs);
   }
 
   const type = typeOf(mode, result);

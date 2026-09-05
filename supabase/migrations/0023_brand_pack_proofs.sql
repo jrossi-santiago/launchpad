@@ -1,0 +1,27 @@
+-- Proofs: the real numbers and scars a comment is allowed to use.
+--
+-- The four comment types are already enforced by shape — an operator
+-- add-on has to carry a figure, a receipts story has to be first person
+-- and past tense. What no regex can check is whether the figure is TRUE,
+-- and a model asked for a number will produce one. Every invented
+-- "activation went 31% → 44%" passed every check we had.
+--
+-- So the founder writes their proofs down once, and the two types that
+-- require evidence become unavailable when there is none: with no lived
+-- proof the comment types offered to the model are counterpoint and
+-- sharp question only, which are the two that are honest with empty
+-- hands. That is a narrower tool schema rather than a rule in a prompt —
+-- a type that is not in the enum cannot be picked.
+--
+-- Shape of each entry (validated in lib/anthropic/proofs.ts, not here,
+-- because it is edited as a form and read as a prompt, never queried):
+--   {
+--     "id":              string,
+--     "kind":            "lived" | "witnessed",
+--     "text":            string,   -- what happened, in the founder's words
+--     "number":          string,   -- the figure, when there is one
+--     "attribution":     string,   -- required for witnessed, plain text
+--     "first_person_ok": boolean   -- false for anything they only watched
+--   }
+alter table public.brand_packs
+  add column proofs jsonb not null default '[]'::jsonb;

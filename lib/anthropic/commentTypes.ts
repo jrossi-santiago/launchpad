@@ -108,31 +108,64 @@ export function commentTypeLabel(value: unknown): string | null {
 // arguments come back in schema order and the choice has to be made
 // before the thing it constrains is written — the same mechanism `point`
 // runs on. A type picked after the fact is a label, not a decision.
-export const COMMENT_TYPE_FIELD = {
-  type: "string",
-  enum: [...COMMENT_TYPE_IDS],
-  description: COMMENT_TYPES.map(
-    (spec) => `${spec.id} = ${spec.when} ${spec.shape}`,
-  ).join(" | "),
-} as const;
+//
+// The enum is narrowed by what the founder can actually prove (see
+// lib/anthropic/proofs.ts). With no proofs on file, `operator` and
+// `receipts` are absent from the schema rather than forbidden in the
+// prompt — a model cannot return a value the tool does not offer, which
+// is the difference between a rule and a wall.
+export function commentTypeField(legal: readonly CommentType[] = COMMENT_TYPE_IDS) {
+  const allowed = COMMENT_TYPES.filter((spec) => legal.includes(spec.id));
+  return {
+    type: "string",
+    enum: allowed.map((spec) => spec.id),
+    description: allowed
+      .map((spec) => `${spec.id} = ${spec.when} ${spec.shape}`)
+      .join(" | "),
+  } as const;
+}
+
+// The unnarrowed field, for the callers that have no proof list to
+// narrow by.
+export const COMMENT_TYPE_FIELD = commentTypeField();
 
 // The selection rules, in the order they are applied. Priority is the
 // point: a post you have a number for gets the number, every time, and
 // the question is the floor rather than the easy way out.
-export const COMMENT_TYPE_RULES = [
-  "Pick the type of comment this post can carry, before writing anything. Exactly one of four, in this order of preference — take the first that is honestly true:",
-  ...COMMENT_TYPES.map(
+export function commentTypeRules(
+  legal: readonly CommentType[] = COMMENT_TYPE_IDS,
+): string[] {
+  const allowed = COMMENT_TYPES.filter((spec) => legal.includes(spec.id));
+  const narrowed = allowed.length < COMMENT_TYPES.length;
+
+  return [
+  `Pick the type of comment this post can carry, before writing anything. Exactly one of ${allowed.length === 4 ? "four" : `these ${allowed.length}`}, in this order of preference — take the first that is honestly true:`,
+  ...allowed.map(
     (spec) => `- \`${spec.id}\` (${spec.label}): ${spec.when} ${spec.shape}`,
   ),
-  "Work down that list. `operator` beats `receipts` when you have both, and either beats `counterpoint` or `question`. Never pick a type whose shape you cannot actually fill: an operator add-on with no number, or a receipts story you did not live, is a lie, and the lie is worse than a smaller comment.",
+  ...(narrowed
+    ? [
+        "The other types are missing from this list because the evidence they require is not on file. That is the answer, not an obstacle to route around: do not describe a result you did not get in order to reach for one.",
+      ]
+    : []),
+  ...(narrowed
+    ? [
+        "Work down that list and take the first that is honestly true. Never pick a type whose shape you cannot actually fill.",
+      ]
+    : [
+        "Work down that list. `operator` beats `receipts` when you have both, and either beats `counterpoint` or `question`. Never pick a type whose shape you cannot actually fill: an operator add-on with no number, or a receipts story you did not live, is a lie, and the lie is worse than a smaller comment.",
+      ]),
   "`question` is the floor, not the escape hatch. If nothing else is honestly available you always have one real question — but it must be a specific one, and 'thoughts?' is not a comment.",
   "A sharp question stops at the question mark. Do not add a sentence explaining why the question matters, and do not state what 'usually' or 'typically' happens — a generalisation about companies you have never seen is a guess, it answers your own question, and it hands the poster an easy 'yeah exactly' instead of the number you wanted. The one thing that may follow the question mark is something that happened to you, in first person.",
   "If you list where a thing might have gone — channels, causes, steps — name at most two concrete ones and leave the list open: 'or somewhere else', 'or something else'. Inventing a third specific mechanism to sound informed is a guess the poster can dismiss, and a narrow list lets them answer the narrow case and skip the real one.",
-  "There is no fifth type. If the only thing you can say is that the post is right, you have nothing, and agreeing at length is the comment this exists to prevent.",
+  `There is no ${allowed.length === 4 ? "fifth" : "other"} type. If the only thing you can say is that the post is right, you have nothing, and agreeing at length is the comment this exists to prevent.`,
   "",
   "Write the comment in the shape of the type you picked. The examples below are what each one looks like — match their shape, never their content:",
-  ...COMMENT_TYPES.map((spec) => `- ${spec.id}: ${spec.example}`),
-];
+  ...allowed.map((spec) => `- ${spec.id}: ${spec.example}`),
+  ];
+}
+
+export const COMMENT_TYPE_RULES = commentTypeRules();
 
 // Enforcement. Each rule is the cheapest test that catches the failure it
 // is aimed at, and each returns the sentence the corrective retry is

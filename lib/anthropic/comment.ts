@@ -104,3 +104,66 @@ export function cleanCta(value: unknown): string | null {
   if (/https?:\/\//i.test(trimmed)) return null;
   return trimmed;
 }
+
+// The two fields that make the comment prove it is about THIS post,
+// generated before the comment for the same reason `point` and
+// `comment_type` are: tool arguments come back in schema order, so a
+// claim made after the fact is a label, and a claim made first is a
+// constraint.
+//
+// `why_specific` is the reusable-comment test. Every prompt in the app
+// already says "never write a reply that would fit any other post", and
+// prose is a request — this is the version the model has to answer.
+// A comment whose only justification is that it is "relevant to the
+// topic" is the generic comment, and it is caught by asking for the
+// justification rather than by reading the comment.
+//
+// `profile_click` is the goal itself, made explicit. The whole point of
+// commenting under someone else's post is that a stranger reads it and
+// opens the profile — so the model names who this comment makes the
+// founder look like before it writes it. Vague there means vague in the
+// comment.
+export const WHY_SPECIFIC_FIELD = {
+  type: "string",
+  description:
+    "Why this comment dies on any other post. Name the thing in THIS post it depends on — the number they gave, the claim they made, the tool they named, the decision they described. 'It is relevant to the topic' is not an answer; if that is all you have, the comment is generic and you should write a different one.",
+} as const;
+
+export const PROFILE_CLICK_FIELD = {
+  type: "string",
+  description:
+    "Finish the sentence: after reading this comment, a stranger thinks 'this is the person who ___'. One concrete clause — what they have done or know, not an adjective. If the honest answer is 'agrees with the post', there is no comment here.",
+} as const;
+
+export const SPECIFICITY_RULES = [
+  "Before writing, answer `why_specific`: what in THIS post does your comment depend on? A comment that would survive being pasted under a different post is the comment this exists to prevent, and naming the dependency is how you find out you do not have one.",
+  "Then `profile_click`: what does a stranger think the founder is, having read it? 'The person who ___' — something they have done or know. This is the whole return on the comment. If you cannot fill it, the comment is not worth the space.",
+];
+
+// The hand-wavy answers. Each is a way of saying "it is on topic", which
+// is exactly what a generic comment's justification looks like — the
+// failure is not subtle enough to need judgement.
+const HAND_WAVY =
+  /^\s*(it'?s |this is |because it'?s |just )?(relevant|related|on ?-?topic|about the (same )?(topic|subject|thing)|fits the (post|topic|subject)|matches the (post|topic|theme)|speaks to (the|this)|applies to (the|this) (post|topic)|generic|general)\b/i;
+
+// A justification that names nothing runs short. Same cheap test the Feed
+// already runs on `about` and `point`, at the length a real dependency
+// takes to state.
+export function isSubstantiveWhySpecific(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.split(/\s+/).length < 5) return false;
+  return !HAND_WAVY.test(trimmed);
+}
+
+// "Agrees with the post" and its cousins: the answer that says the
+// comment buys nothing, given honestly. Caught rather than trusted,
+// because a model that has written a generic comment will still fill
+// this field in.
+const NO_ONE_IN_PARTICULAR =
+  /\b(agrees?|agreeing|supports?|likes?|appreciates?|understands?|is interested|cares about|is engaged|is thoughtful|is knowledgeable|knows (their )?stuff|gets it)\b/i;
+
+export function isSubstantiveProfileClick(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.split(/\s+/).length < 3) return false;
+  return !NO_ONE_IN_PARTICULAR.test(trimmed);
+}
