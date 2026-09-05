@@ -10,6 +10,7 @@ import {
 import {
   flattenStacks,
   loadStacks,
+  sortFeed,
   type FeedCard,
   type NetworkProfileRow,
 } from "@/lib/network/stack";
@@ -103,9 +104,13 @@ export async function POST(request: Request) {
     // The Feed still shows everything undecided, not just this Reload's
     // slice — the replies are merged onto the cards that got one so a
     // Reload adds to the stream rather than replacing it.
+    //
+    // Sorted after the merge, not before: the stacks were loaded before a
+    // single reply existed, so ordering them first would rank every reply
+    // this sweep just wrote as though it were still missing.
     const written = new Map(cards.map((card) => [card.id, card]));
-    const feed: FeedCard[] = flattenStacks(stacks).map(
-      (card) => written.get(card.id) ?? card,
+    const feed: FeedCard[] = sortFeed(
+      flattenStacks(stacks).map((card) => written.get(card.id) ?? card),
     );
 
     // Metered only when it actually cost model calls.
