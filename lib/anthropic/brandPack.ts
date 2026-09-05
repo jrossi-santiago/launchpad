@@ -23,6 +23,11 @@ export type BrandPackRow = {
   voice_notes: string | null;
   raw_interview: InterviewAnswers | null;
   reply_templates: string[];
+  // The founder's real numbers and scars — the only results a comment is
+  // allowed to claim. Parsed by lib/anthropic/proofs.ts rather than typed
+  // here, because rows written before the column existed come back
+  // undefined and a hand-edited one can hold anything.
+  proofs: unknown;
   created_at: string;
 };
 

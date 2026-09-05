@@ -10,12 +10,21 @@ import {
   isUsableComment,
 } from "@/lib/anthropic/comment";
 import {
-  COMMENT_TYPE_FIELD,
-  COMMENT_TYPE_RULES,
+  commentTypeField,
+  commentTypeRules,
   isCommentType,
   violatesTypeRule,
   type CommentType,
 } from "@/lib/anthropic/commentTypes";
+import {
+  legalCommentTypes,
+  parseProofs,
+  proofPayload,
+  proofRules,
+  violatesProofRule,
+  wearsWitnessedProof,
+  type Proof,
+} from "@/lib/anthropic/proofs";
 
 export type TweetForDrafts = {
   author_handle: string | null;
@@ -53,7 +62,8 @@ type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
 export const GROK_HANDLE = "@grok";
 export const GROK_VARIANT = 3;
 
-const SAVE_REPLIES_TOOL = {
+function saveRepliesTool(proofs: Proof[]) {
+  return {
   name: "save_replies",
   description: "Save 2 reply drafts for this tweet.",
   input_schema: {
@@ -64,7 +74,7 @@ const SAVE_REPLIES_TOOL = {
         items: {
           type: "object",
           properties: {
-            comment_type: COMMENT_TYPE_FIELD,
+            comment_type: commentTypeField(legalCommentTypes(proofs)),
             point: POINT_FIELD,
             reply: {
               type: "string",
@@ -83,7 +93,8 @@ const SAVE_REPLIES_TOOL = {
     },
     required: ["replies"],
   },
-} as const;
+  } as const;
+}
 
 const SAVE_GROK_TOOL = {
   name: "save_grok_question",
@@ -114,14 +125,16 @@ const SAVE_GROK_TOOL = {
 // The @grok question is the exception that proves it. Its whole purpose
 // is to get Grok answering publicly on the ground this founder wants to
 // be known for, so it needs the agenda and is asked for on its own.
-const REPLIES_PROMPT = [
+function repliesPrompt(proofs: Proof[]): string[] {
+  return [
   "You are writing X (Twitter) reply drafts for a founder, in their own voice, based on their Brand Pack.",
   "Each draft must read like something a real person would type as a quick reply — not ad copy, no hashtags unless the brand voice uses them.",
   ...BREVITY_RULES,
   "",
-  "Each draft is one of exactly four kinds of comment, named in `comment_type` before it is written:",
-  ...COMMENT_TYPE_RULES,
-  "The two drafts must be two different types. They are the choice the founder is making, so giving them the same shape twice wastes one of them — write the best type this post can carry, then the best of the remaining three.",
+  "Each draft is one of a small number of kinds of comment, named in `comment_type` before it is written:",
+  ...commentTypeRules(legalCommentTypes(proofs)),
+  ...proofRules(proofs),
+  "The two drafts must be two different types. They are the choice the founder is making, so giving them the same shape twice wastes one of them — write the best type this post can carry, then the best of the ones left.",
   "",
   "Each draft names its own `point` before it is written, and the two points must be different things — that is what makes the drafts genuinely different rather than one idea worded twice.",
   "",
@@ -133,7 +146,8 @@ const REPLIES_PROMPT = [
   "Each draft also carries a `cta`: the line the founder may append under it when they decide this post is worth an ask. It is separate from the reply and is usually left off.",
   "`offer` is in the request for one reason — so the cta can name something real. It must not appear anywhere in the reply text, in any form.",
   ...CTA_RULES,
-].join("\n");
+  ];
+}
 
 const GROK_PROMPT = [
   "You are writing one X (Twitter) reply for a founder, in their own voice, based on their Brand Pack.",
@@ -153,10 +167,12 @@ export function buildRepliesRequest(
   brandPack: BrandPackRow,
   tweet: TweetForDrafts,
 ) {
+  const proofs = parseProofs(brandPack.proofs);
+
   return {
     model: "claude-haiku-4-5-20251001",
     max_tokens: 1024,
-    system: REPLIES_PROMPT,
+    system: repliesPrompt(proofs).join("\n"),
     messages: [
       {
         role: "user",
@@ -174,13 +190,14 @@ export function buildRepliesRequest(
           // that outlet, an agenda with none leaks into the reply.
           voice_notes: brandPack.voice_notes,
           voice_samples: brandPack.reply_templates,
+          ...(proofs.length ? { proofs_you_may_use: proofPayload(proofs) } : {}),
           offer: brandPack.business_summary,
           tweet_author: tweet.author_handle,
           tweet_text: tweet.content,
         }),
       },
     ],
-    tools: [SAVE_REPLIES_TOOL],
+    tools: [saveRepliesTool(proofs)],
     tool_choice: { type: "tool", name: "save_replies" },
   };
 }
@@ -260,7 +277,7 @@ async function post(body: unknown): Promise<unknown> {
   return response.json();
 }
 
-function toWrittenDraft(value: unknown): WrittenDraft | null {
+function toWrittenDraft(value: unknown, proofs: Proof[]): WrittenDraft | null {
   if (!value || typeof value !== "object") return null;
   const row = value as Record<string, unknown>;
   if (typeof row.reply !== "string" || !isUsableComment(row.reply)) return null;
@@ -270,6 +287,11 @@ function toWrittenDraft(value: unknown): WrittenDraft | null {
   // draft, because it is a label saying the check was done.
   if (!isCommentType(row.comment_type)) return null;
   if (violatesTypeRule(row.comment_type, row.reply)) return null;
+  // And the numbers in it have to be the founder's. A draft that invents
+  // a result is dropped rather than shown — the type on the card is a
+  // claim that the check was done.
+  if (violatesProofRule(row.comment_type, row.reply, proofs)) return null;
+  if (wearsWitnessedProof(row.reply, proofs)) return null;
   return {
     text: row.reply.trim(),
     cta: cleanCta(row.cta),
@@ -277,9 +299,12 @@ function toWrittenDraft(value: unknown): WrittenDraft | null {
   };
 }
 
-function parseReplies(input: Record<string, unknown>): WrittenDraft[] | null {
+function parseReplies(
+  input: Record<string, unknown>,
+  proofs: Proof[],
+): WrittenDraft[] | null {
   const replies = Array.isArray(input.replies)
-    ? input.replies.map(toWrittenDraft)
+    ? input.replies.map((reply) => toWrittenDraft(reply, proofs))
     : [];
 
   if (replies.length !== 2 || replies.some((draft) => draft === null)) {
@@ -304,8 +329,12 @@ async function requestReplies(
   brandPack: BrandPackRow,
   tweet: TweetForDrafts,
 ): Promise<WrittenDraft[]> {
+  const proofs = parseProofs(brandPack.proofs);
   const request = buildRepliesRequest(brandPack, tweet);
-  const first = parseReplies(toolInput(await post(request), "save_replies"));
+  const first = parseReplies(
+    toolInput(await post(request), "save_replies"),
+    proofs,
+  );
   if (first) return first;
 
   const second = parseReplies(
@@ -320,12 +349,13 @@ async function requestReplies(
           },
           {
             role: "user",
-            content: `Write the two drafts again. Each one: a \`comment_type\` you can honestly fill — an operator add-on carries a real number, a receipts story is something that happened to you and carries a figure, a counterpoint grants the scope the post holds in before naming the one it does not, a sharp question ends in a question mark and names what it is asking about — then \`point\`, naming the single thing it adds that the tweet does not already say, then a reply of ${COMMENT_MAX} characters or fewer built from that point, then a \`cta\` (empty string if there is nothing concrete to offer). The two drafts must be different comment types, and neither may open by grading the post.`,
+            content: `Write the two drafts again. Each one: a \`comment_type\` you can honestly fill — an operator add-on carries a real number, a receipts story is something that happened to you and carries a figure, a counterpoint grants the scope the post holds in before naming the one it does not, a sharp question ends in a question mark and names what it is asking about — then \`point\`, naming the single thing it adds that the tweet does not already say, then a reply of ${COMMENT_MAX} characters or fewer built from that point, then a \`cta\` (empty string if there is nothing concrete to offer). The two drafts must be different comment types, and neither may open by grading the post. Every number you write must be one you were given in \`proofs_you_may_use\` — do not invent a result to reach for a type.`,
           },
         ],
       }),
       "save_replies",
     ),
+    proofs,
   );
 
   if (!second) {

@@ -10,12 +10,21 @@ import {
   isUsableComment,
 } from "@/lib/anthropic/comment";
 import {
-  COMMENT_TYPE_FIELD,
-  COMMENT_TYPE_RULES,
+  commentTypeField,
+  commentTypeRules,
   isCommentType,
   violatesTypeRule,
   type CommentType,
 } from "@/lib/anthropic/commentTypes";
+import {
+  legalCommentTypes,
+  parseProofs,
+  proofPayload,
+  proofRules,
+  violatesProofRule,
+  wearsWitnessedProof,
+  type Proof,
+} from "@/lib/anthropic/proofs";
 import type { FetchedTweet } from "@/lib/getx/tweet";
 
 // HeatCheck is the one place in the app that runs Sonnet rather than
@@ -52,7 +61,9 @@ export type HeatCheckCard = FetchedTweet & {
   read: HeatCheckRead;
 };
 
-const SAVE_COMMENT_TOOL = {
+function saveCommentTool(proofs: Proof[]) {
+  const typeField = commentTypeField(legalCommentTypes(proofs));
+  return {
   name: "save_comment",
   description:
     "Save one comment to post under this tweet, the kind of comment it is, and why that kind.",
@@ -71,9 +82,9 @@ const SAVE_COMMENT_TOOL = {
           "value = add something of your own to the subject; grok = tag @grok and ask it one real question the thread would want answered; pitch = the post is about the exact problem the founder solves, so say what you do.",
       },
       comment_type: {
-        ...COMMENT_TYPE_FIELD,
+        ...typeField,
         description:
-          `Which of the four comment types you are writing. Required when kind is value. When kind is grok or pitch answer "question" and ignore it — it is not used. ${COMMENT_TYPE_FIELD.description}`,
+          `Which comment type you are writing. Required when kind is value. When kind is grok or pitch answer "question" and ignore it — it is not used. ${typeField.description}`,
       },
       why: {
         type: "string",
@@ -91,9 +102,11 @@ const SAVE_COMMENT_TOOL = {
     },
     required: ["about", "kind", "comment_type", "why", "point", "comment", "cta"],
   },
-} as const;
+  } as const;
+}
 
-const SYSTEM_PROMPT = [
+function systemPromptLines(proofs: Proof[]): string[] {
+  return [
   "You are reading a high-performing X (Twitter) post from the last 24 hours in a founder's niche, and writing the one comment they should leave under it.",
   "This post is already getting attention. A good comment is read by everyone who came for the post — which is the entire point, and also the reason a bad one is expensive.",
   "",
@@ -104,8 +117,9 @@ const SYSTEM_PROMPT = [
   "- `grok`: the thread is turning on a factual question nobody has settled — a number, a claim, a comparison — and asking @grok publicly would genuinely serve the people reading. Never a question you could answer yourself, and never a device for getting your own topic into the thread.",
   "- `pitch`: the post is about the exact problem this founder's product solves, and someone reading it would want to know the product exists. Only when it is that direct. Wanting to pitch is not a reason.",
   "",
-  "A `value` comment is one of exactly four kinds, and `comment_type` says which before you write it:",
-  ...COMMENT_TYPE_RULES,
+  "A `value` comment is one of a small number of kinds, and `comment_type` says which before you write it:",
+  ...commentTypeRules(legalCommentTypes(proofs)),
+  ...proofRules(proofs),
   "",
   "Then name the one thing your comment adds in `point`, and write the comment from that.",
   ...BREVITY_RULES.map((rule) => `- ${rule}`),
@@ -123,16 +137,19 @@ const SYSTEM_PROMPT = [
   "For a `pitch` comment: say plainly what the founder does and why it is relevant to what the post said. No link, no DM ask, no 'we're building the future of'. It should read like a person mentioning the thing they made, once, because it happens to fit.",
   "",
   "You cannot open links and you cannot see images. If the post's point depends on something you were not given, do not reconstruct it — write to the part you do have, or say in `why` that the post is thin without it.",
-];
+  ];
+}
 
 export function buildHeatCheckRequest(
   brandPack: BrandPackRow,
   tweet: FetchedTweet,
 ) {
+  const proofs = parseProofs(brandPack.proofs);
+
   return {
     model: HEATCHECK_MODEL,
     max_tokens: 700,
-    system: SYSTEM_PROMPT.join("\n"),
+    system: systemPromptLines(proofs).join("\n"),
     messages: [
       {
         role: "user",
@@ -144,6 +161,7 @@ export function buildHeatCheckRequest(
           icp: brandPack.icp,
           voice_notes: brandPack.voice_notes,
           voice_samples: brandPack.reply_templates,
+          ...(proofs.length ? { proofs_you_may_use: proofPayload(proofs) } : {}),
           post: {
             author: tweet.author_handle,
             text: tweet.content,
@@ -154,7 +172,7 @@ export function buildHeatCheckRequest(
         }),
       },
     ],
-    tools: [SAVE_COMMENT_TOOL],
+    tools: [saveCommentTool(proofs)],
     tool_choice: { type: "tool", name: "save_comment" },
   };
 }
@@ -196,7 +214,10 @@ function isCommentToolInput(input: unknown): input is CommentToolInput {
 // rather than a boolean because it is what the corrective retry is given:
 // "not postable" makes the model guess, "an operator add-on needs the
 // figure" makes it fix the thing that is actually wrong.
-function unusableReason(input: CommentToolInput): string | null {
+function unusableReason(
+  input: CommentToolInput,
+  proofs: Proof[],
+): string | null {
   const trimmed = input.comment.trim();
 
   if (!isUsableComment(trimmed)) {
@@ -211,7 +232,11 @@ function unusableReason(input: CommentToolInput): string | null {
   // The four types are what a `value` comment can be. grok and pitch have
   // their own shapes and are checked above.
   if (input.kind === "value") {
-    return violatesTypeRule(input.comment_type, trimmed);
+    return (
+      violatesTypeRule(input.comment_type, trimmed) ??
+      violatesProofRule(input.comment_type, trimmed, proofs) ??
+      wearsWitnessedProof(trimmed, proofs)
+    );
   }
   return null;
 }
@@ -259,10 +284,11 @@ export async function callSonnetHeatCheck(
   brandPack: BrandPackRow,
   tweet: FetchedTweet,
 ): Promise<HeatCheckRead> {
+  const proofs = parseProofs(brandPack.proofs);
   const request = buildHeatCheckRequest(brandPack, tweet);
   let result = await requestComment(request);
 
-  let reason = unusableReason(result);
+  let reason = unusableReason(result, proofs);
   if (reason) {
     result = await requestComment({
       ...request,
@@ -279,7 +305,7 @@ export async function callSonnetHeatCheck(
       ],
     });
 
-    reason = unusableReason(result);
+    reason = unusableReason(result, proofs);
     if (reason) {
       throw new Error(`Model did not return a postable comment. ${reason}`);
     }
