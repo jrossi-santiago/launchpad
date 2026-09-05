@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { TypeChip } from "@/components/comment/TypeChip";
 import { CtaToggle } from "@/components/comment/CtaToggle";
 import { isFreshReply, newestSweepId, type FeedCard } from "@/lib/network/stack";
+import type { ReloadEvent } from "@/lib/network/reload";
+import { readNdjson } from "@/lib/network/ndjson";
 import { copyAndOpenReply, withCta } from "@/lib/x/intent";
 import { formatAge } from "@/components/network/NetworkCard";
 import {
@@ -150,6 +152,12 @@ export function FeedStream({
   // Cards showing their CTA. A Reload rewrites the replies underneath, so
   // this is cleared with them rather than left pointing at old asks.
   const [ctaOn, setCtaOn] = useState<Set<string>>(new Set());
+  // The cards this sweep is still writing for. They are on screen the
+  // whole time — a post you can already read, with its reply on the way —
+  // which is the entire point of streaming the thing.
+  const [pending, setPending] = useState<Set<string>>(new Set());
+  // How many have landed, so the button counts up instead of spinning.
+  const [written, setWritten] = useState(0);
   const [pull, setPull] = useState(0);
   // Mark all done asks first. Every card it clears is gone for good, and
   // that is one press too many to make on the way past the button.
@@ -228,19 +236,59 @@ export function FeedStream({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ rewrite: mode === "rewrite" }),
       });
-      const body = await response.json().catch(() => null);
-      if (!response.ok) {
+
+      // The refusals — no Brand Pack, no allowance left, no session — are
+      // still ordinary JSON with a status on them. Only a sweep that
+      // actually started streams.
+      const streaming = response.headers
+        .get("content-type")
+        ?.includes("ndjson");
+
+      if (!response.ok || !streaming || !response.body) {
+        const body = await response.json().catch(() => null);
         const label = mode === "rewrite" ? "Re-Write" : "Reload";
         throw new Error(body?.error ?? `${label} failed (${response.status}).`);
       }
 
-      setFeed((body?.feed ?? []) as FeedCard[]);
-      setCtaOn(new Set());
-      setCardStates({});
-      setSentSuggestion(null);
-      if (body?.summary) {
-        setReloadNote(describeReload(body.summary as ReloadSummary, mode));
-      }
+      let streamError: string | null = null;
+
+      await readNdjson<ReloadEvent>(response.body, (event) => {
+        if (event.type === "feed") {
+          // The posts, in the order they will keep. Everything a previous
+          // sweep left behind on screen goes with them.
+          setFeed(event.feed);
+          setPending(new Set(event.pending));
+          setWritten(0);
+          setCtaOn(new Set());
+          setCardStates({});
+          setSentSuggestion(null);
+          return;
+        }
+
+        if (event.type === "reply") {
+          const card = event.card;
+          setFeed((prev) =>
+            prev.map((item) => (item.id === card.id ? card : item)),
+          );
+          setPending((prev) => {
+            if (!prev.has(card.id)) return prev;
+            const next = new Set(prev);
+            next.delete(card.id);
+            return next;
+          });
+          setWritten((count) => count + 1);
+          return;
+        }
+
+        if (event.type === "done") {
+          setReloadNote(describeReload(event.summary, mode));
+          return;
+        }
+
+        streamError = event.error;
+      });
+
+      if (streamError) throw new Error(streamError);
     } catch (err) {
       setError(
         err instanceof Error
@@ -251,6 +299,9 @@ export function FeedStream({
       );
     } finally {
       setBusy(null);
+      // Nothing is still being written once the stream is over, however
+      // it ended. A card left marked pending would shimmer forever.
+      setPending(new Set());
     }
   }
 
@@ -655,9 +706,14 @@ export function FeedStream({
               aria-hidden
               className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
             />
-            {busy === "rewrite"
-              ? "Rewriting every reply…"
-              : "Reading posts, writing replies…"}
+            {/* Once the posts are on screen the button stops being a
+                spinner and becomes a count: the work left, in cards,
+                which is the only unit the person waiting cares about. */}
+            {pending.size > 0 || written > 0
+              ? `Writing replies… ${written} of ${written + pending.size}`
+              : busy === "rewrite"
+                ? "Rewriting every reply…"
+                : "Reading posts, writing replies…"}
           </>
         ) : (
           <>
@@ -668,11 +724,16 @@ export function FeedStream({
       </button>
 
       <p className="-mt-2 text-center text-xs text-zinc-400 dark:text-zinc-500">
-        {busy === "rewrite"
-          ? "Writing a fresh reply for every post already in your Feed. This takes a moment."
-          : busy
-            ? "Pulling the newest posts from every account you watch. This takes a moment."
-            : "Pulls the last day of posts from every account you watch and writes a reply for each one."}
+        {/* The posts arrive before the replies do, so once they are here
+            the line stops apologising for the wait and says what to do
+            with it: start reading, the rest is filling in. */}
+        {busy && pending.size > 0
+          ? "The posts are here — replies are filling in as they're written. Start at the top."
+          : busy === "rewrite"
+            ? "Writing a fresh reply for every post already in your Feed. This takes a moment."
+            : busy
+              ? "Pulling the newest posts from every account you watch. This takes a moment."
+              : "Pulls the last day of posts from every account you watch and writes a reply for each one."}
       </p>
 
       {reloadNote ? (
@@ -712,6 +773,11 @@ export function FeedStream({
         <div className="flex flex-col gap-3">
           {visible.map((card) => {
             const state = cardStates[card.id] ?? "live";
+            // A reply is on its way to this card. Whatever it is holding
+            // now — nothing, a decline, or the reply Re-Write is about to
+            // replace — is about to be untrue, so the card says what is
+            // happening instead of showing it.
+            const writing = pending.has(card.id);
             return (
               <article
                 key={card.id}
@@ -754,7 +820,19 @@ export function FeedStream({
                     post, and said so instead of replying anyway. Worth
                     its own block — a card with no reply because nobody
                     has swept it yet is a different thing. */}
-                {!card.suggested_reply && card.reply_unclear ? (
+                {writing ? (
+                  <div className="flex items-center gap-2 rounded-xl border border-dashed border-zinc-300 px-3 py-3 dark:border-zinc-700">
+                    <span
+                      aria-hidden
+                      className="h-3 w-3 animate-spin rounded-full border-2 border-zinc-400 border-t-transparent dark:border-zinc-500 dark:border-t-transparent"
+                    />
+                    <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                      Reading this post, writing a reply…
+                    </span>
+                  </div>
+                ) : null}
+
+                {!writing && !card.suggested_reply && card.reply_unclear ? (
                   <div className="flex flex-col gap-1 rounded-xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-900 dark:bg-amber-950/30">
                     <span className="text-[10px] font-medium tracking-wider text-amber-700 uppercase dark:text-amber-300">
                       One for you to read
@@ -782,7 +860,7 @@ export function FeedStream({
                   </div>
                 ) : null}
 
-                {card.suggested_reply ? (
+                {!writing && card.suggested_reply ? (
                   <div
                     className={`flex flex-col gap-2 rounded-xl border p-3 ${
                       isFreshReply(card, currentSweep)

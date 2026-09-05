@@ -405,6 +405,34 @@ export function sortFeed(cards: FeedCard[]): FeedCard[] {
   });
 }
 
+// The same order, worked out before the sweep has written anything.
+//
+// A streamed Reload hands the Feed over first and fills the replies in
+// afterwards, which leaves the ordering with a choice: sort now and
+// re-sort at the end, or sort once. Re-sorting at the end is the wrong
+// answer — by then someone is reading, and cards moving under a thumb
+// mid-read is worse than any ordering it could fix.
+//
+// So the order is computed once, from what the sweep is about to do. A
+// card queued for a reply is ranked as though it already has one, because
+// in a few seconds it will, and it lands in the position it is going to
+// keep. The exceptions are cards the model declines or fails on, which
+// end up ranked slightly higher than a finished sort would put them —
+// which is the right way round anyway: this sweep read those posts, and
+// a post somebody read and could not answer is worth more attention than
+// one nothing has looked at.
+export function sortFeedForSweep(
+  cards: FeedCard[],
+  pending: ReadonlySet<string>,
+): FeedCard[] {
+  const sweepId = newestSweepId(cards);
+  return [...cards].sort((a, b) => {
+    const bandA = pending.has(a.id) ? 0 : bandOf(a, sweepId);
+    const bandB = pending.has(b.id) ? 0 : bandOf(b, sweepId);
+    return bandA !== bandB ? bandA - bandB : byNewest(a, b);
+  });
+}
+
 export function flattenStacks(stacks: NetworkStack[]): FeedCard[] {
   return sortFeed(
     stacks.flatMap((stack) =>

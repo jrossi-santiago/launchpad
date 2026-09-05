@@ -8,6 +8,7 @@ import {
 } from "@/lib/anthropic/feedReply";
 import { pickOnTerritory } from "@/lib/anthropic/onTerritory";
 import { STACK_WINDOW, type FeedCard, type NetworkStack } from "@/lib/network/stack";
+import type { FeedReloadUsage } from "@/lib/usage/feedReloads";
 
 // What Reload means, in one place.
 //
@@ -36,7 +37,15 @@ export const RELOAD_REPLY_BUDGET = 30;
 // Replies are written a few at a time for the same reason polls are:
 // unbounded parallelism against the API is how you get rate-limited, and
 // sequential would put twenty round trips on one button press.
-const REPLY_CONCURRENCY = 4;
+//
+// Eight rather than four, and a pool rather than waves. The old shape
+// took the batch four at a time and awaited all four, so every group ran
+// at the speed of its slowest member — and the slow member is usually a
+// card that failed a validator and is paying for a second call. A pool
+// starts the next card the moment a lane frees, which is worth about as
+// much as the doubled width itself. Rate limiting is handled a layer
+// down, in lib/anthropic/client.ts, which is what makes eight safe.
+const REPLY_CONCURRENCY = 8;
 
 // A reply written against a post keeps until the post itself has moved on.
 // Inside this window a Reload leaves the existing reply alone and spends
@@ -61,6 +70,28 @@ export type ReloadSummary = {
   // says so rather than leaving unexplained cards without replies.
   budgetReached: boolean;
 };
+
+// What a Reload sends back, as it happens.
+//
+// The button used to be one request that returned one object, and it took
+// as long as thirty model calls take — up to a minute and a half of
+// nothing, with a spinner and a note apologising for it. The work is the
+// same length; what changed is that the Feed no longer waits for the end
+// of it. The route streams these as newline-delimited JSON:
+//
+//   feed   once, as soon as the posts are pulled and the sweep knows what
+//          it is going to write. Every card, in its final order, with the
+//          ids of the ones a reply is coming for.
+//   reply  one per card, as each finishes. A card that failed or was
+//          declined arrives here too — settled is settled.
+//   done   the summary and the refreshed allowance, at the end.
+//   error  a sweep that fell over. Terminal, and never partway through a
+//          card: the replies already sent are already saved.
+export type ReloadEvent =
+  | { type: "feed"; feed: FeedCard[]; pending: string[] }
+  | { type: "reply"; card: FeedCard }
+  | { type: "done"; summary: ReloadSummary; usage: FeedReloadUsage | null }
+  | { type: "error"; error: string };
 
 // A decline counts as fresh alongside a reply: the model read this post
 // within the window and said it could not follow it, and asking the same
@@ -167,7 +198,18 @@ export async function writeReloadReplies(
   userId: string,
   brandPack: BrandPackRow,
   cards: FeedCard[],
-  options: { force?: boolean } = {},
+  options: {
+    force?: boolean;
+    // Which cards this sweep is going to write for, handed over as soon
+    // as that is known and before the first model call. The streaming
+    // route sends it so the Feed can mark those cards as being written
+    // while they are being written, rather than showing thirty identical
+    // empty cards and one spinner.
+    onPending?: (pending: FeedCard[]) => void;
+    // One card, finished. `result` is null when the write failed, which
+    // is not the same as a decline — a decline is a result.
+    onReply?: (card: FeedCard, result: FeedReplyResult | null) => void;
+  } = {},
 ): Promise<{ cards: FeedCard[]; summary: ReloadSummary }> {
   // Stamped on everything this run writes, so the Feed can tell its work
   // from a reply carried over without inferring it from timestamps.
@@ -194,6 +236,8 @@ export async function writeReloadReplies(
     }
   }
 
+  options.onPending?.(needsReply);
+
   // One pass over the whole batch decides which posts are actually about
   // the founder's field, before any reply is written. Only those few see
   // the agenda; the rest are written voice-only and cannot lean anywhere.
@@ -206,57 +250,82 @@ export async function writeReloadReplies(
     })),
   );
 
+  // A pool, not waves. Each lane takes the next card the moment it is
+  // free, so one card paying for a corrective retry no longer holds seven
+  // others still.
   const results = new Map<string, FeedReplyResult>();
-  for (let i = 0; i < needsReply.length; i += REPLY_CONCURRENCY) {
-    const batch = needsReply.slice(i, i + REPLY_CONCURRENCY);
-    const written = await Promise.all(
-      batch.map((card) =>
-        writeReply(
-          supabase,
-          userId,
-          brandPack,
-          card,
-          onTerritory.has(card.id),
-          sweepId,
-        ),
-      ),
-    );
-    written.forEach((result, index) => {
+  let nextIndex = 0;
+
+  async function lane(): Promise<void> {
+    for (;;) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= needsReply.length) return;
+
+      const card = needsReply[index];
+      const result = await writeReply(
+        supabase,
+        userId,
+        brandPack,
+        card,
+        onTerritory.has(card.id),
+        sweepId,
+      );
+
       if (!result) {
         summary.failed += 1;
-        return;
+        // Reported even so: the card is done being waited for, and a
+        // stream that never mentions it again leaves it spinning.
+        options.onReply?.(card, null);
+        continue;
       }
 
-      results.set(batch[index].id, result);
+      results.set(card.id, result);
 
       if (!result.reply) {
         summary.declined += 1;
-        return;
+      } else {
+        summary.written += 1;
+        // Counted on the way out, not from the gate's picks: a card the
+        // gate chose but the model failed on is not a reply you got.
+        if (onTerritory.has(card.id)) summary.onTerritory += 1;
       }
 
-      summary.written += 1;
-      // Counted on the way out, not from the gate's picks: a card the
-      // gate chose but the model failed on is not a reply you got.
-      if (onTerritory.has(batch[index].id)) summary.onTerritory += 1;
-    });
+      options.onReply?.(withResult(card, result, sweepId), result);
+    }
   }
+
+  await Promise.all(
+    Array.from({ length: Math.min(REPLY_CONCURRENCY, needsReply.length) }, () =>
+      lane(),
+    ),
+  );
 
   return {
     cards: cards.map((card) => {
       const result = results.get(card.id);
-      return result
-        ? {
-            ...card,
-            suggested_reply: result.reply,
-            suggested_reply_at: new Date().toISOString(),
-            suggested_cta: result.reply ? result.cta : null,
-            reply_type: result.commentType,
-            reply_sweep_id: sweepId,
-            reply_about: result.about,
-            reply_unclear: result.reply ? null : (result.unclear ?? "No reason given."),
-          }
-        : card;
+      return result ? withResult(card, result, sweepId) : card;
     }),
     summary,
+  };
+}
+
+// One reply, merged onto the card it was written for. Shared by the
+// streamed card and the returned one so a caller reading the stream and a
+// caller reading the return value are looking at the same thing.
+function withResult(
+  card: FeedCard,
+  result: FeedReplyResult,
+  sweepId: string,
+): FeedCard {
+  return {
+    ...card,
+    suggested_reply: result.reply,
+    suggested_reply_at: new Date().toISOString(),
+    suggested_cta: result.reply ? result.cta : null,
+    reply_type: result.commentType,
+    reply_sweep_id: sweepId,
+    reply_about: result.about,
+    reply_unclear: result.reply ? null : (result.unclear ?? "No reason given."),
   };
 }

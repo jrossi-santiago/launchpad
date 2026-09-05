@@ -1,4 +1,5 @@
 import type { BrandPackRow } from "@/lib/anthropic/brandPack";
+import { anthropicMessages, toolInput } from "@/lib/anthropic/client";
 
 // Which posts in a sweep are actually about what this founder works on.
 //
@@ -107,14 +108,7 @@ export async function pickOnTerritory(
   if (budget === 0 || !process.env.ANTHROPIC_API_KEY) return new Set();
 
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
+    const data = await anthropicMessages({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 1024,
         system: SYSTEM_PROMPT,
@@ -137,27 +131,13 @@ export async function pickOnTerritory(
         ],
         tools: [PICK_TOOL],
         tool_choice: { type: "tool", name: "pick_on_territory" },
-      }),
     });
 
-    if (!response.ok) {
-      throw new Error(`Anthropic API responded with ${response.status}`);
-    }
-
-    const data = await response.json();
-    const content: unknown[] = Array.isArray(data?.content) ? data.content : [];
-    const toolUse = content.find(
-      (block): block is { type: "tool_use"; name: string; input: unknown } =>
-        typeof block === "object" &&
-        block !== null &&
-        (block as { type?: unknown }).type === "tool_use" &&
-        (block as { name?: unknown }).name === "pick_on_territory",
-    );
-
-    if (!toolUse || !isPickList(toolUse.input)) return new Set();
+    const input = toolInput(data, "pick_on_territory");
+    if (!isPickList(input)) return new Set();
 
     const picked = new Set<string>();
-    for (const pick of toolUse.input.picks) {
+    for (const pick of input.picks) {
       if (picked.size >= budget) break;
       const candidate = candidates[pick.index];
       if (candidate) picked.add(candidate.id);

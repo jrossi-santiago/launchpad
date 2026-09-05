@@ -6,18 +6,18 @@ import {
   RELOAD_PER_PROFILE,
   selectReloadCards,
   writeReloadReplies,
+  type ReloadEvent,
 } from "@/lib/network/reload";
 import {
   flattenStacks,
   loadStacks,
-  sortFeed,
-  type FeedCard,
+  sortFeedForSweep,
   type NetworkProfileRow,
 } from "@/lib/network/stack";
 import { getFeedReloadUsage, recordFeedReload } from "@/lib/usage/feedReloads";
 
-// A Reload is a poll of every watched account followed by up to twenty
-// model calls, four at a time. That is minutes, not milliseconds, in the
+// A Reload is a poll of every watched account followed by up to thirty
+// model calls, eight at a time. That is minutes, not milliseconds, in the
 // worst case, so the route asks for the room to finish rather than being
 // cut off half way through with the replies it paid for unreturned.
 export const maxDuration = 300;
@@ -86,55 +86,101 @@ export async function POST(request: Request) {
 
   const profileRows = (profiles ?? []) as NetworkProfileRow[];
 
-  try {
-    // A Re-Write rewrites what is on screen, so there is nothing to fetch.
-    if (!rewrite) {
-      await pollProfiles(supabase, user.id, profileRows, { force: true });
-    }
+  // Everything above here can still fail as an ordinary JSON error, and
+  // does: no session, no Brand Pack, no allowance left. Past this point
+  // the response is a stream, so a failure is an `error` event inside it
+  // rather than a status code — the headers are long gone by the time
+  // anything can go wrong.
+  const encoder = new TextEncoder();
 
-    const stacks = await loadStacks(supabase, user.id);
-    const { cards, summary } = await writeReloadReplies(
-      supabase,
-      user.id,
-      brandPack as BrandPackRow,
-      rewrite ? flattenStacks(stacks) : selectReloadCards(stacks),
-      { force: rewrite },
-    );
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      // A closed tab is not an error. The sweep keeps going when the
+      // reader disappears — every reply is written to the database before
+      // it is ever sent, so the work is not wasted, it is just unwatched.
+      let open = true;
+      const send = (event: ReloadEvent) => {
+        if (!open) return;
+        try {
+          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+        } catch {
+          open = false;
+        }
+      };
 
-    // The Feed still shows everything undecided, not just this Reload's
-    // slice — the replies are merged onto the cards that got one so a
-    // Reload adds to the stream rather than replacing it.
-    //
-    // Sorted after the merge, not before: the stacks were loaded before a
-    // single reply existed, so ordering them first would rank every reply
-    // this sweep just wrote as though it were still missing.
-    const written = new Map(cards.map((card) => [card.id, card]));
-    const feed: FeedCard[] = sortFeed(
-      flattenStacks(stacks).map((card) => written.get(card.id) ?? card),
-    );
+      try {
+        // A Re-Write rewrites what is on screen, so there is nothing to fetch.
+        if (!rewrite) {
+          await pollProfiles(supabase, user.id, profileRows, { force: true });
+        }
 
-    // Metered only when it actually cost model calls.
-    if (summary.written > 0) {
-      await recordFeedReload(supabase, user.id, {
-        mode: rewrite ? "rewrite" : "reload",
-        profiles: profileRows.length,
-        per_profile: rewrite ? null : RELOAD_PER_PROFILE,
-        ...summary,
-      }).catch((error) => console.error("feed/reload usage record failed", error));
-    }
+        const stacks = await loadStacks(supabase, user.id);
+        // The Feed still shows everything undecided, not just this
+        // Reload's slice — the replies are merged onto the cards that get
+        // one, so a Reload adds to the stream rather than replacing it.
+        const everything = flattenStacks(stacks);
 
-    const refreshed = await getFeedReloadUsage(supabase, user.id).catch(() => usage);
+        const { summary } = await writeReloadReplies(
+          supabase,
+          user.id,
+          brandPack as BrandPackRow,
+          rewrite ? everything : selectReloadCards(stacks),
+          {
+            force: rewrite,
+            // The whole Feed, in its final order, before the first model
+            // call. This is the event that ends the wait: the posts are
+            // on screen from here, and the replies arrive underneath them.
+            onPending: (pending) => {
+              const ids = new Set(pending.map((card) => card.id));
+              send({
+                type: "feed",
+                feed: sortFeedForSweep(everything, ids),
+                pending: [...ids],
+              });
+            },
+            onReply: (card) => send({ type: "reply", card }),
+          },
+        );
 
-    return NextResponse.json({ feed, summary, usage: refreshed, mode: rewrite ? "rewrite" : "reload" });
-  } catch (error) {
-    console.error("feed/reload failed", error);
-    return NextResponse.json(
-      {
-        error: rewrite
-          ? "Failed to rewrite your replies. Please try again."
-          : "Failed to reload your Feed. Please try again.",
-      },
-      { status: 502 },
-    );
-  }
+        // Metered only when it actually cost model calls.
+        if (summary.written > 0) {
+          await recordFeedReload(supabase, user.id, {
+            mode: rewrite ? "rewrite" : "reload",
+            profiles: profileRows.length,
+            per_profile: rewrite ? null : RELOAD_PER_PROFILE,
+            ...summary,
+          }).catch((error) =>
+            console.error("feed/reload usage record failed", error),
+          );
+        }
+
+        const refreshed = await getFeedReloadUsage(supabase, user.id).catch(
+          () => usage,
+        );
+
+        send({ type: "done", summary, usage: refreshed });
+      } catch (error) {
+        console.error("feed/reload failed", error);
+        send({
+          type: "error",
+          error: rewrite
+            ? "Failed to rewrite your replies. Please try again."
+            : "Failed to reload your Feed. Please try again.",
+        });
+      } finally {
+        open = false;
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "content-type": "application/x-ndjson; charset=utf-8",
+      "cache-control": "no-store, no-transform",
+      // Nginx and friends will happily hold a streamed response until it
+      // finishes, which would put the wait back exactly where it was.
+      "x-accel-buffering": "no",
+    },
+  });
 }
