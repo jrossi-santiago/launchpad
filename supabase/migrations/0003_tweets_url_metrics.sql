@@ -1,4 +1,4 @@
--- Launchpad Day 3: single-tweet lookup adds url/metrics and dedupes fetches.
+-- HeatCheck Day 3: single-tweet lookup adds url/metrics and dedupes fetches.
 alter table public.tweets
   add column url text,
   add column metrics jsonb not null default '{}'::jsonb;

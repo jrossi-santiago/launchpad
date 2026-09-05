@@ -1,4 +1,4 @@
--- Launchpad Day 6: cache each search result PAGE separately, keyed by
+-- HeatCheck Day 6: cache each search result PAGE separately, keyed by
 -- cursor, so "More" pagination doesn't collide with or overwrite the
 -- page-1 cache row.
 --

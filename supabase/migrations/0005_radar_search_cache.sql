@@ -1,4 +1,4 @@
--- Launchpad Day 5: Radar search cache.
+-- HeatCheck Day 5: Radar search cache.
 -- Caches GetXAPI advanced-search results per user+query+params for 6 hours
 -- so a repeat search doesn't burn a GetXAPI call or a usage event.
 

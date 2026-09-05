@@ -548,7 +548,7 @@ export function LaunchpadQueue({
           {xHandle != null && !canAutoReply ? (
             <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
               <span className="font-medium text-zinc-900 dark:text-zinc-50">
-                Replies are sent by you, not by Launchpad.
+                Replies are sent by you, not by HeatCheck.
               </span>{" "}
               Since 23 February 2026 X does not allow apps to reply to other
               people&apos;s posts. Hit{" "}

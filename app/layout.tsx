@@ -13,13 +13,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Launchpad",
+  title: "HeatCheck",
   description: "Find your next customers on X, before your competitors do.",
   appleWebApp: {
     // iOS reads this rather than the manifest: it is what makes the icon
     // on the home screen open standalone instead of in a Safari tab.
     capable: true,
-    title: "Launchpad",
+    title: "HeatCheck",
     statusBarStyle: "default",
   },
 };

@@ -300,7 +300,7 @@ export function TweetCard({
 
                       {/* Copies, then opens X's reply composer in a new
                           tab with the text already in it. The primary
-                          action whenever Launchpad cannot send the reply
+                          action whenever HeatCheck cannot send the reply
                           itself, since it is the shortest path that
                           works. */}
                       {draft.status === "posted" || tweetHasPostedDraft ? null : (

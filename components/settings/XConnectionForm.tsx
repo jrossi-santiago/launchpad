@@ -115,7 +115,7 @@ export function XConnectionForm({
     <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
       <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">X Account</h2>
       <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-        Connect an X account so Launchpad can reply, like and follow on your
+        Connect an X account so HeatCheck can reply, like and follow on your
         behalf — with a click, from a draft you choose.
       </p>
 
@@ -173,7 +173,7 @@ export function XConnectionForm({
           <p>
             This account is still connected with session cookies. Reconnecting
             through X&apos;s official sign-in removes the risk of the account
-            being restricted for posting this way, and Launchpad stops holding
+            being restricted for posting this way, and HeatCheck stops holding
             your session cookies.
           </p>
           <button
@@ -200,8 +200,8 @@ export function XConnectionForm({
                 {redirecting ? "Redirecting…" : "Connect X account"}
               </button>
               <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-                You&apos;ll approve Launchpad on X, then land back here. No
-                password or cookies are ever entered in Launchpad.
+                You&apos;ll approve HeatCheck on X, then land back here. No
+                password or cookies are ever entered in HeatCheck.
               </p>
             </>
           ) : (
