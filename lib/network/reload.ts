@@ -116,11 +116,17 @@ async function writeReply(
 // replies attached, alongside what it did. The returned cards are the ones
 // Reload considered — the caller decides what the rest of the Feed looks
 // like around them.
+//
+// `force` is Re-Write: every card is written again, whatever it is
+// holding. The TTL exists so a second Reload does not pay twice for the
+// same post, and that is exactly what someone pressing Re-Write is asking
+// to override — they have read the replies and want another set.
 export async function writeReloadReplies(
   supabase: SupabaseClient,
   userId: string,
   brandPack: BrandPackRow,
   cards: FeedCard[],
+  options: { force?: boolean } = {},
 ): Promise<{ cards: FeedCard[]; summary: ReloadSummary }> {
   const now = Date.now();
   const summary: ReloadSummary = {
@@ -133,7 +139,7 @@ export async function writeReloadReplies(
 
   const needsReply: FeedCard[] = [];
   for (const card of cards) {
-    if (isReplyFresh(card, now)) {
+    if (!options.force && isReplyFresh(card, now)) {
       summary.reused += 1;
     } else if (needsReply.length < RELOAD_REPLY_BUDGET) {
       needsReply.push(card);
